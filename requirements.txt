@@ -1,0 +1,13 @@
+chex
+einops
+flax
+jax # jax[cuda12-local]==0.5.3
+ml_collections
+numpy
+optax
+orbax
+orbax-checkpoint
+POT
+tqdm
+wandb
+

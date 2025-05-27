@@ -7,7 +7,7 @@ from flax import linen as nn
 import jax
 import jax.numpy as jnp
 
-from galaxy_diffusion import embedding_models
+from ddprism import embedding_models
 
 
 class EmbeddingTests(chex.TestCase):

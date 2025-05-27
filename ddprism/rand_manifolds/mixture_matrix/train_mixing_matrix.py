@@ -12,11 +12,11 @@ import optax
 from tqdm import tqdm
 import wandb
 
-from galaxy_diffusion import diffusion
-from galaxy_diffusion import linalg
-from galaxy_diffusion import training_utils
-from galaxy_diffusion import utils
-from galaxy_diffusion.rand_manifolds import random_manifolds
+from ddprism import diffusion
+from ddprism import linalg
+from ddprism import training_utils
+from ddprism import utils
+from ddprism.rand_manifolds import random_manifolds
 
 FLAGS = flags.FLAGS
 flags.DEFINE_string('workdir', None, 'working directory.')

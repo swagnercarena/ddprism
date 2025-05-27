@@ -11,9 +11,9 @@ import jax.numpy as jnp
 import numpy as np
 import ot
 
-from galaxy_diffusion import diffusion
-from galaxy_diffusion import sampling
-from galaxy_diffusion.linalg import DPLR
+from ddprism import diffusion
+from ddprism import sampling
+from ddprism.linalg import DPLR
 
 
 def sample(

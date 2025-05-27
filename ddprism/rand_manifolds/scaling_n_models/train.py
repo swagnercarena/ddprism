@@ -12,12 +12,12 @@ import optax
 from tqdm import tqdm
 import wandb
 
-from galaxy_diffusion import diffusion
-from galaxy_diffusion import linalg
-from galaxy_diffusion import training_utils
-from galaxy_diffusion import utils
-from galaxy_diffusion.rand_manifolds import random_manifolds
-from galaxy_diffusion import plotting_utils
+from ddprism import diffusion
+from ddprism import linalg
+from ddprism import training_utils
+from ddprism import utils
+from ddprism.rand_manifolds import random_manifolds
+from ddprism import plotting_utils
 
 FLAGS = flags.FLAGS
 flags.DEFINE_string('workdir', None, 'working directory.')
@@ -42,13 +42,13 @@ def get_dataset(rng, config):
         alpha = config.alpha
     else:
         alpha = [config.alpha for i in range(config.n_sources)]
-        
+
     if isinstance(config.phase, list):
         assert len(config.phase) == config.n_sources
         phase = config.phase
     else:
         phase = [config.phase for i in range(config.n_sources)]
-        
+
     for _ in range(config.n_sources):
         rng_x, rng = jax.random.split(rng_x, 2)
         x_all.append(
@@ -200,12 +200,12 @@ def _sample_wrapper_joint(
         sampling_kwargs = config.get(
             'gaussian_sampling_kwargs', config.sampling_kwargs
         )
-        
+
     # For the Gibbs sampling case:
     # When training the model for the 1st source, use equivalent number of sampling steps.
     if 'gibbs_rounds' in sampling_kwargs:
         sampling_kwargs = sampling_kwargs.to_dict().copy()
-        sampling_kwargs['steps'] = sampling_kwargs['steps'] * sampling_kwargs['gibbs_rounds'] 
+        sampling_kwargs['steps'] = sampling_kwargs['steps'] * sampling_kwargs['gibbs_rounds']
 
 
     # Sample given the current posterior.
@@ -370,7 +370,7 @@ def main(_):
             rng_sample, rng = jax.random.split(rng)
             x_post = _sample_wrapper(
                 rng_sample, x_post, post_state, state_list, variables, config,
-                n_sources, 
+                n_sources,
                 gaussian=True
             )
 
@@ -389,10 +389,10 @@ def main(_):
         rng_sample, rng = jax.random.split(rng)
         x_post = _sample_wrapper(
             rng_sample, x_post, post_state, state_list, variables, config,
-            n_sources, 
+            n_sources,
             gaussian=True
         )
-        
+
         # Log a figure with the initial posterior samples.
         if config.log_figure:
             fig = plotting_utils.show_corner(jnp.concat(x_post, axis=1))._figure
@@ -474,7 +474,7 @@ def main(_):
                     {'posterior samples': wandb.Image(fig)},
                     step=(step + 1 + step_offset) * config.epochs
                 )
-            
+
             # Log the divergence.
             divergence_dict = {}
             for i, x_single in enumerate(x_post):

@@ -9,8 +9,8 @@ import jax
 from jax import Array
 import jax.numpy as jnp
 
-from galaxy_diffusion import embedding_models
-from galaxy_diffusion import linalg
+from ddprism import embedding_models
+from ddprism import linalg
 
 
 def matmul(matrix: Array, vector: Array) -> Array:

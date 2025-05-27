@@ -10,7 +10,7 @@ from numpy import ndarray
 from PIL import Image
 from tensorflow.keras.datasets import mnist
 
-from galaxy_diffusion import linalg
+from ddprism import linalg
 
 # Path to downloaded images from ImageNet
 DEFAULT_IMAGENET_PATH = os.path.join(

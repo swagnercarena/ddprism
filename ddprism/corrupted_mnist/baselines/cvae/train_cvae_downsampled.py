@@ -18,15 +18,15 @@ from pathlib import Path
 import tqdm
 from einops import rearrange
 
-from galaxy_diffusion import training_utils
-from galaxy_diffusion.corrupted_mnist import datasets
-from galaxy_diffusion.corrupted_mnist import metrics
+from ddprism import training_utils
+from ddprism.corrupted_mnist import datasets
+from ddprism.corrupted_mnist import metrics
 
 import config_downsample_grass
 import config_downsample_mnist
 
 import models
-imagenet_path = '/mnt/home/aakhmetzhanova/ceph/galaxy-diffusion/corrupted-mnist/dataset/grass_jpeg/' 
+imagenet_path = '/mnt/home/aakhmetzhanova/ceph/galaxy-diffusion/corrupted-mnist/dataset/grass_jpeg/'
 
 FLAGS = flags.FLAGS
 flags.DEFINE_string('workdir', None, 'working directory.')
@@ -36,7 +36,7 @@ config_flags.DEFINE_config_file(
 )
 
 class cVAE(nn.Module):
-    r"""Creates an cVAE model. 
+    r"""Creates an cVAE model.
     Assumes that the input is a flattened image and the dimensionality of the latent space is the same for both relevant and irrelevant features.
     Arguments:
         latent_features: The number of latent features.
@@ -51,14 +51,14 @@ class cVAE(nn.Module):
     def get_latents(self, x: Array, encoder: nn.Module) -> Tuple:
         out = encoder(x)
         mu, var = jnp.split(out, 2, axis=-1)
-        var = jnp.exp(var) 
+        var = jnp.exp(var)
         return mu, var
-        
+
     def get_salient_latents(self, x: Array) -> Array:
         # Compute means and variances for relevant (s) variables.
         mu_s_x, var_s_x = self.get_latents(x, self.encoder_s)
         return mu_s_x, var_s_x
-        
+
     def get_background_latents(self, x: Array) -> Array:
         # Compute means and variances for irrelevant (z) variables.
         mu_z_x, var_z_x = self.get_latents(x, self.encoder_z)
@@ -84,39 +84,39 @@ class cVAE(nn.Module):
     def denoise_samples(self, rng: Array, x: Array) -> Array:
         sample_shape = x.shape[:-3]
         # Sample only the salient features
-        s_x_samples, mu_s_x, var_s_x = self.sample_salient_latents(rng, x, sample_shape) 
-        # Zero out the irrelevant features and decode the latents. 
+        s_x_samples, mu_s_x, var_s_x = self.sample_salient_latents(rng, x, sample_shape)
+        # Zero out the irrelevant features and decode the latents.
         x_samples = self.decoder(jnp.concatenate((s_x_samples, jnp.zeros_like(s_x_samples)), axis=-1))
         return x_samples
-    
+
     def decode_latent_samples(self, s: Array, z: Array) -> Array:
         # Concatenate latents
         latent_samples = jnp.concatenate((s, z), axis=-1)
         x = self.decoder(latent_samples)
         return x
-        
+
     @nn.compact
     def __call__(self, rng: Array, x: Array, b: Array) -> Array:
-        
+
         # Compute means and variances for relevant (s) and irrelevant (z) latent variables,
         # And draw samples from the corresponding latent spaces.
         sample_shape_x = x.shape[:-3]
         sample_shape_b = b.shape[:-3]
         rng, rng_s_x, rng_s_b, rng_z_x, rng_z_b = jax.random.split(rng, 5)
 
-        s_x_samples, mu_s_x, var_s_x = self.sample_salient_latents(rng_s_x, x, sample_shape_x) 
-        s_b_samples, mu_s_b, var_s_b = self.sample_salient_latents(rng_s_b, b, sample_shape_b) 
-        z_x_samples, mu_z_x, var_z_x = self.sample_background_latents(rng_z_x, x, sample_shape_x) 
-        z_b_samples, mu_z_b, var_z_b = self.sample_background_latents(rng_z_b, b, sample_shape_b) 
+        s_x_samples, mu_s_x, var_s_x = self.sample_salient_latents(rng_s_x, x, sample_shape_x)
+        s_b_samples, mu_s_b, var_s_b = self.sample_salient_latents(rng_s_b, b, sample_shape_b)
+        z_x_samples, mu_z_x, var_z_x = self.sample_background_latents(rng_z_x, x, sample_shape_x)
+        z_b_samples, mu_z_b, var_z_b = self.sample_background_latents(rng_z_b, b, sample_shape_b)
 
-        # Get background and target samples 
+        # Get background and target samples
         # Target samples
         x_samples = self.decode_latent_samples(s_x_samples, z_x_samples)
         # Background samples
         b_samples = self.decode_latent_samples(jnp.zeros_like(s_b_samples), z_b_samples)
         # Return samples and means and variances of the distributions (all necessary for computing the loss function)
-        return x_samples, b_samples, mu_s_x, var_s_x, mu_z_x, var_z_x, mu_z_b, var_z_b 
-        
+        return x_samples, b_samples, mu_s_x, var_s_x, mu_z_x, var_z_x, mu_z_b, var_z_b
+
 @jax.jit
 def update_model(state, grads):
     """Update model with gradients."""
@@ -140,15 +140,15 @@ def apply_model(state, x, b, rng, beta=1):
         reconstruction_loss =  optax.losses.squared_error(x, x_samples).mean(axis=-1)
         reconstruction_loss += optax.losses.squared_error(b, b_samples).mean(axis=-1)
         reconstruction_loss *= input_dim
-        
+
 
         # KL loss
         kl_loss =  jnp.log(var_s_x) - (mu_s_x**2) - var_s_x
         kl_loss += jnp.log(var_z_x) - (mu_z_x**2) - var_z_x
-        kl_loss += jnp.log(var_z_b) - (mu_z_b**2) - var_z_b 
+        kl_loss += jnp.log(var_z_b) - (mu_z_b**2) - var_z_b
         kl_loss = -0.5*kl_loss.sum(axis=-1) # summing over the independent latents
-        
-        
+
+
         # CVAE loss
         reconstruction_loss = reconstruction_loss.mean()
         kl_loss = kl_loss.mean()
@@ -164,7 +164,7 @@ def apply_model(state, x, b, rng, beta=1):
 def get_latent_samples(state, x, rng,):
     """Returns denoised samples for a single batch."""
     rng_samples, rng_drop = jax.random.split(rng)
-    denoised_samples = state.apply_fn({'params': state.params}, rng_samples, x, method='denoise_samples', 
+    denoised_samples = state.apply_fn({'params': state.params}, rng_samples, x, method='denoise_samples',
                                  rngs={'dropout': rng_drop})
 
     return denoised_samples
@@ -174,14 +174,14 @@ def denoised_dataset(state, target, rng, batch_size=128):
     """Returns denoised dataset."""
     dataset_size = target.shape[0]
     steps_per_epoch = dataset_size // batch_size
-    
+
     denoised_samples = []
     for _ in range(steps_per_epoch):
         target_batch = target[_*batch_size:(_+1)*batch_size]
-        
+
         rng, _ = jax.random.split(rng)
         x_samples = get_latent_samples(state, target_batch, rng,)
-    
+
         denoised_samples.append(x_samples)
     denoised_samples = jnp.concatenate(denoised_samples)
     return denoised_samples
@@ -198,11 +198,11 @@ def get_full_resolution_examples_only(config, obs, labels):
     num_ratios[list(num_ratios.keys())[0]] += config.sample_batch_size - total
 
     # Flatten (the images) and add dimension to batch over.
-    obs = rearrange( 
+    obs = rearrange(
                     obs, '(N M) H W C -> N M (H W C)',
                     M=config.sample_batch_size
-                )    
-    labels = rearrange( 
+                )
+    labels = rearrange(
                     labels, '(N M) -> N M',
                     M=config.sample_batch_size
                 )
@@ -218,7 +218,7 @@ def main(_):
     """Train a joint posterior denoiser."""
     model_params = FLAGS.config
     workdir = FLAGS.workdir
-    
+
     os.makedirs(workdir, exist_ok=True)
 
     print(f'Found devices {jax.devices()}')
@@ -229,7 +229,7 @@ def main(_):
 
     rng = jax.random.key(config_mnist.rng_key)
     rng_dataset, rng_comp, rng = jax.random.split(rng, 3)
-    
+
     # Get our observations, mixing matrix, and covariance.
     corrupt_obs, A_mat, cov_y, labels = datasets.get_dataset(
         rng_dataset, 1.0, config_mnist.mnist_amp, config_mnist.sigma_y,
@@ -237,8 +237,8 @@ def main(_):
         config_mnist.dataset_size, zeros_and_ones=True,
     )
     f_train = get_full_resolution_examples_only(config_mnist, corrupt_obs, labels)
-    
-    
+
+
     # Train dataset with uncorrupted mnist digits for computing metrics later on.
     uncorrupt_obs, A_mat, cov_y, labels = datasets.get_dataset(
         rng_dataset, 0.0, 1.0, config_mnist.sigma_y,
@@ -249,7 +249,7 @@ def main(_):
 
     # Background train dataset with grass only.
     config_grass = config_downsample_grass.get_config()
-    
+
     rng = jax.random.key(config_grass.rng_key)
     rng_dataset, rng_comp, rng = jax.random.split(rng, 3)
 
@@ -263,11 +263,11 @@ def main(_):
 
 
     # Load classifier model to compute the FCD metric.
-    classifier_workdir=Path('/mnt/home/aakhmetzhanova/galaxy-diffusion/galaxy_diffusion/corrupted_mnist/mnist_classifier/') 
+    classifier_workdir=Path('/mnt/home/aakhmetzhanova/galaxy-diffusion/ddprism/corrupted_mnist/mnist_classifier/')
     checkpointer = PyTreeCheckpointer()
     checkpoint_manager = CheckpointManager(classifier_workdir, checkpointer)
     classifier_model = metrics.CNN()
-    classifier_params = checkpoint_manager.restore(checkpoint_manager.latest_step())['params'] 
+    classifier_params = checkpoint_manager.restore(checkpoint_manager.latest_step())['params']
     checkpoint_manager.close()
 
     # Reshape target and background datasets.
@@ -286,10 +286,10 @@ def main(_):
         encoder_s, encoder_z = [
             models.UNetEncoder(
                 latent_features=latent_features,
-                hid_channels=(128,), 
-                hid_blocks=(1,), 
+                hid_channels=(128,),
+                hid_blocks=(1,),
                 input_shape=image_shape,
-                heads=None, 
+                heads=None,
                 dropout_rate=0.1,
             ) for _ in range(2)
         ]
@@ -297,8 +297,8 @@ def main(_):
         encoder_s, encoder_z = [
             models.UNetEncoder(
                 latent_features=latent_features,
-                hid_channels=(32, 64, 128), 
-                hid_blocks=(1, 1, 1), 
+                hid_channels=(32, 64, 128),
+                hid_blocks=(1, 1, 1),
                 input_shape=image_shape,
                 dropout_rate=0.1,
             ) for _ in range(2)
@@ -310,8 +310,8 @@ def main(_):
     elif model_params.decoder == 'unet':
         decoder = models.UNetDecoder(
             in_shape=(28, 28, 1),
-            hid_channels=(128, ), 
-            hid_blocks=(1, ), 
+            hid_channels=(128, ),
+            hid_blocks=(1, ),
             dropout_rate=0.1
         )
 
@@ -327,28 +327,28 @@ def main(_):
 
     dataset_size = target.shape[0]
     steps_per_epoch = dataset_size // batch_size
-    
+
     learning_rate_fn = optax.cosine_decay_schedule(
         init_value=learning_rate, decay_steps=epochs*steps_per_epoch
     )
     tx = optax.adam(learning_rate=learning_rate_fn)
-    
-    state = train_state.TrainState.create(apply_fn=model_cVAE.apply, params=params_cVAE['params'], tx=tx) 
-    
+
+    state = train_state.TrainState.create(apply_fn=model_cVAE.apply, params=params_cVAE['params'], tx=tx)
+
     # Initialize the run.
     if model_params.run_name is None:
         run_name = model_params.encoder + '_to_' + model_params.decoder + f'_lr_{learning_rate:.0e}'
     else:
         run_name = model_params.run_name
-        
+
     print(run_name)
     wandb.init(
         project='cvae-runs-downsampled',
         config=model_params,
-        name=run_name, 
+        name=run_name,
         mode='online'
     )
-    
+
     run_dir = workdir + run_name +'/'
     os.makedirs(run_dir, exist_ok=True)
 
@@ -358,17 +358,17 @@ def main(_):
     fcd = []
     min_fcd = 1e16
     for epoch in range(epochs):
-        
+
         losses = []
         kl_losses = []
         reconstruction_losses = []
-        
+
         for step in range(steps_per_epoch):
             # Get a random batch.
             rng_epoch, rng_x, rng_b, rng = jax.random.split(rng, 4)
             batch_x = jax.random.randint(rng_x, shape=(batch_size,), minval=0, maxval=dataset_size)
             batch_b = jax.random.randint(rng_b, shape=(batch_size,), minval=0, maxval=dataset_size)
-    
+
             # Compute gradients and losses.
             grads, loss, loss_dict = apply_model( # pylint: disable=not-callable
                 state, target[batch_x], background[batch_b], rng_epoch, beta=beta
@@ -379,17 +379,17 @@ def main(_):
             losses.append(loss)
             kl_losses.append(loss_dict['kl_loss'])
             reconstruction_losses.append(loss_dict['reconstruction_loss'])
-            
+
         losses_per_epoch.append([jnp.asarray(losses).mean(), jnp.asarray(kl_losses).mean(), jnp.asarray(reconstruction_losses).mean()])
-    
+
         # Compute FCD between the denoised samples and the training set.
         denoised_samples = denoised_dataset(state, target, rng, batch_size=batch_size).reshape(dataset_size, image_shape[0], image_shape[1], image_shape[2])
         denoised_samples = denoised_samples / config_mnist.mnist_amp
         fcd.append(metrics.fcd_mnist(classifier_model, classifier_params, f_train_uncorrupted[0], denoised_samples))
-        
+
         # Log to wandb.
         wandb.log(
-            {'loss': losses_per_epoch[-1][0], 
+            {'loss': losses_per_epoch[-1][0],
              'kl_loss': losses_per_epoch[-1][1],
              'reconstruction_loss': losses_per_epoch[-1][2],
              'fcd': fcd[-1]
@@ -400,24 +400,24 @@ def main(_):
         checkpoint_manager = CheckpointManager(
                 os.path.join(run_dir, 'checkpoints'), checkpointer
             )
-    
+
         # Save the state parameters and model parameters
-        ckpt = { 
-                'params': state.params, 
+        ckpt = {
+                'params': state.params,
                 'losses': jnp.array(losses_per_epoch), 'fcd': jnp.array(fcd)
-                    
+
                 }
         save_args = orbax_utils.save_args_from_target(ckpt)
         checkpoint_manager.save(epoch+1, ckpt, save_kwargs={'save_args': save_args})
-        
+
 
         # Save best model with best FCD in a separate '0'-th checkpoint
         if fcd[-1] < min_fcd:
             # Save the state parameters and model parameters
             ckpt = {
-                    'params': state.params, 
+                    'params': state.params,
                     'losses': jnp.array(losses_per_epoch), 'fcd': jnp.array(fcd)
-                        
+
                     }
             save_args = orbax_utils.save_args_from_target(ckpt)
             checkpoint_manager.save(0, ckpt, save_kwargs={'save_args': save_args})

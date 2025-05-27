@@ -8,7 +8,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from galaxy_diffusion import linalg
+from ddprism import linalg
 
 
 def get_dataloader(

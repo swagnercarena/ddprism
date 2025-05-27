@@ -6,8 +6,8 @@ import jax
 import jax.numpy as jnp
 import optax
 
-from galaxy_diffusion import diffusion
-from galaxy_diffusion import embedding_models
+from ddprism import diffusion
+from ddprism import embedding_models
 
 
 def apply_model(state, x, rng, pmap=False):

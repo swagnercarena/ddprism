@@ -12,7 +12,7 @@ from orbax.checkpoint import PyTreeCheckpointer
 from pqm import pqm_chi2
 import scipy
 
-from galaxy_diffusion.corrupted_mnist import datasets
+from ddprism.corrupted_mnist import datasets
 
 class CNN(nn.Module):
     """A simple CNN model.

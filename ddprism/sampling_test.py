@@ -9,9 +9,9 @@ import jax
 import jax.numpy as jnp
 import optax
 
-from galaxy_diffusion import sampling
-from galaxy_diffusion import embedding_models
-from galaxy_diffusion import diffusion
+from ddprism import sampling
+from ddprism import embedding_models
+from ddprism import diffusion
 
 def _create_state_diffusion(rng, features, dif):
     """Create a state for testing with simple diffusion model."""

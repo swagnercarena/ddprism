@@ -16,9 +16,9 @@ import optax
 from tqdm import tqdm
 import wandb
 
-from galaxy_diffusion import diffusion
-from galaxy_diffusion import training_utils
-from galaxy_diffusion import utils
+from ddprism import diffusion
+from ddprism import training_utils
+from ddprism import utils
 
 import datasets
 import metrics

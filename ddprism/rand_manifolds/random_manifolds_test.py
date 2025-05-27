@@ -5,7 +5,7 @@ import chex
 import jax
 import jax.numpy as jnp
 
-from galaxy_diffusion.rand_manifolds import random_manifolds
+from ddprism.rand_manifolds import random_manifolds
 
 
 class DataGenerationTests(chex.TestCase):

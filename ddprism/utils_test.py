@@ -7,9 +7,9 @@ import chex
 from flax.training import train_state
 import optax
 
-from galaxy_diffusion import embedding_models
-from galaxy_diffusion import diffusion
-from galaxy_diffusion import utils
+from ddprism import embedding_models
+from ddprism import diffusion
+from ddprism import utils
 
 
 def _create_state_diffusion(rng, features, dif):

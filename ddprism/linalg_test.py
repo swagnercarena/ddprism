@@ -6,7 +6,7 @@ import chex
 import jax
 import jax.numpy as jnp
 
-from galaxy_diffusion import linalg
+from ddprism import linalg
 
 def _create_DPLR_instance(features=5):
     u_mat = (
@@ -41,7 +41,7 @@ class DPLRTests(chex.TestCase):
 
     @chex.all_variants(without_device=False)
     def test_mul(self):
-        """Test that multiplation works as expected."""
+        """Test that multiplication works as expected."""
         dplr_instance = _create_DPLR_instance()
         vec = jax.random.normal(
             jax.random.PRNGKey(2),
@@ -227,7 +227,7 @@ class DPLRBatchTests(chex.TestCase):
 
     @chex.all_variants(without_device=False)
     def test_mul(self):
-        """Test that multiplation works as expected."""
+        """Test that multiplication works as expected."""
         batch_size = 32
         dplr_instance = _create_DPLR_instance_batch(batch_size=batch_size)
         vec = jax.random.normal(

@@ -1,8 +1,8 @@
 "Test scripts for diffusion.py"
 
-from absl.testing import absltest
 import copy
 
+from absl.testing import absltest
 import chex
 from flax import linen as nn
 import jax

@@ -117,7 +117,8 @@ def create_train_state_timemlp(rng, config, learning_rate_fn, params=None):
             rng, jnp.ones((1, config.feat_dim)) , jnp.ones((1,))
         )
 
-    tx = get_optimizer(config)(learning_rate_fn)
+    adam = get_optimizer(config)(learning_rate_fn)
+    tx = optax.chain(optax.clip_by_global_norm(1.0), adam)
 
     return train_state.TrainState.create(
         apply_fn=denoiser.apply, params=params['params'], tx=tx
@@ -138,7 +139,8 @@ def create_train_state_gaussian(rng, config, learning_rate_fn, params=None):
         params['params']['mu_x'] *= 0.0
         params['params']['cov_x'] *= 4.0
 
-    tx = get_optimizer(config)(learning_rate_fn)
+    adam = get_optimizer(config)(learning_rate_fn)
+    tx = optax.chain(optax.clip_by_global_norm(1.0), adam)
 
     return train_state.TrainState.create(
         apply_fn=denoiser.apply, params=params['params'], tx=tx

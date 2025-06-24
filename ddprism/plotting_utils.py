@@ -1,10 +1,10 @@
-import jax.numpy as jnp
+"""Plotting utilities."""
+
 from jax import Array
 import numpy as np
 import matplotlib.pyplot as plt
 import pandas as pd
 import seaborn as sb
-import ot
 
 def show_corner(x: Array, cmap: str = 'Blues', binrange = (-3,3), **kwargs) -> plt.Figure:
     cmap = plt.get_cmap(cmap)

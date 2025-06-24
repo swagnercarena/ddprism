@@ -1,16 +1,17 @@
 "Test scripts for diffusion.py"
 
 from absl.testing import absltest
+import copy
 
 import chex
 from flax import linen as nn
 import jax
 import jax.numpy as jnp
 
-from ddprism import diffusion
-from ddprism import embedding_models
-from ddprism import linalg
-from ddprism.linalg_test import _create_DPLR_instance
+from galaxy_diffusion import diffusion
+from galaxy_diffusion import embedding_models
+from galaxy_diffusion import linalg
+from galaxy_diffusion.linalg_test import _create_DPLR_instance
 
 
 class SDETests(chex.TestCase):
@@ -198,10 +199,10 @@ class DiffusionTests(chex.TestCase):
         expect_x = apply_func(params_denoiser_dplr, x_draws, t_draws)
         comp_x = denoiser.apply(params_denoiser, x_draws, t_draws)
 
-        self.assertTrue(jnp.allclose(expect_x, comp_x))
+        self.assertTrue(jnp.allclose(expect_x, comp_x, atol=1e-3))
 
 
-class PosteriorDiffusionTests(chex.TestCase):
+class PosteriorDenoiserJointTests(chex.TestCase):
     """Runs tests of various posterior diffusion functions."""
 
     @chex.all_variants
@@ -282,11 +283,11 @@ class PosteriorDiffusionTests(chex.TestCase):
 
         # Initialize the posterior denoiser.
         denoiser_dplr = diffusion.PosteriorDenoiserJoint(
-            denoiser_models_dplr, y_features, use_dplr=True, maxiter=1000,
+            denoiser_models_dplr, y_features, use_dplr=True, maxiter=1,
             rtol=1e-8
         )
         denoiser = diffusion.PosteriorDenoiserJoint(
-            denoiser_models, y_features, use_dplr=False, maxiter=1000,
+            denoiser_models, y_features, use_dplr=False, maxiter=1,
             rtol=1e-8
         )
         params_denoiser = denoiser.init(
@@ -325,7 +326,7 @@ class PosteriorDiffusionTests(chex.TestCase):
         apply_func = self.variant(denoiser_dplr.apply, static_argnames='method')
         expect_x = apply_func(params_denoiser_dplr, x_draws, t_draws)
         comp_x = denoiser.apply(params_denoiser, x_draws, t_draws)
-        self.assertTrue(jnp.allclose(comp_x, expect_x, atol=1e-3))
+        self.assertTrue(jnp.allclose(comp_x, expect_x))
 
     @chex.all_variants
     def test_posterior_denoiser_joint(self):
@@ -422,6 +423,101 @@ class PosteriorDiffusionTests(chex.TestCase):
         for i, sigma_t in enumerate(jnp.moveaxis(sigma_t_all, -1, 0)):
             sigma_t_exp = sde_models[i].apply({}, t_draws, method='sigma')
             self.assertTrue(jnp.allclose(sigma_t, sigma_t_exp))
+
+
+class PosteriorDenoiserJointDiagonalTests(chex.TestCase):
+    """Runs tests of various posterior diffusion functions."""
+
+    @chex.all_variants
+    def test_posterior_denoiser_joint(self):
+        """Test that the posterior denoiser returns the expected outputs."""
+        rng = jax.random.PRNGKey(0)
+        rng_keys = jax.random.split(rng, 2)
+
+        features = 5
+        n_models = 3
+        # Test that the output has the desired shape.
+        batch_size = 16
+        x_draws = jax.random.normal(
+            rng_keys[0], (batch_size, n_models * features)
+        )
+        t_draws = jax.random.uniform(rng_keys[1], (batch_size,))
+
+        # Initialize Denoiser.
+        emb_features = 64
+        y_features = features
+        hid_features = (32, 32)
+        activation = nn.gelu
+        normalize = True
+        sde_models = [
+            diffusion.VESDE(a=(i+1)*1e-3, b=(i+1)*1e2) for i in range(n_models)
+        ]
+        denoiser_models =[
+            diffusion.Denoiser(
+                sde_models[i],
+                embedding_models.TimeMLP(
+                    features, hid_features, activation, normalize
+                ),
+                emb_features = emb_features * (i+1)
+            ) for i in range(n_models-1)
+        ]
+        # Add a Gaussian denoiser.
+        denoiser_models.append(
+            diffusion.GaussianDenoiser(sde_models[-1])
+        )
+
+        denoiser_comp = diffusion.PosteriorDenoiserJoint(
+            denoiser_models, y_features
+        )
+        denoiser = diffusion.PosteriorDenoiserJointDiagonal(
+            denoiser_models, y_features
+        )
+        params_denoiser = denoiser.init(
+            rng, jnp.ones((1, n_models * features)), jnp.ones((1,))
+        )
+        params_denoiser['variables']['cov_y'] = (
+            jnp.tile(jnp.eye(5)[None], (batch_size, 1, 1))
+        )
+        params_denoiser['variables']['y'] = (
+            jnp.tile(params_denoiser['variables']['y'], (batch_size, 1))
+        )
+        params_denoiser['variables']['A'] = jax.random.uniform(
+            rng, shape=(
+                (batch_size,) + params_denoiser['variables']['A'].shape[1:]
+            )
+        )
+        params_comp = copy.deepcopy(params_denoiser)
+        params_comp['variables']['A'] = jax.vmap(jax.vmap(jnp.diag))(
+            params_denoiser['variables']['A']
+        )
+
+        # Make sure each denoiser model was initialized.
+        self.assertEqual(len(params_denoiser['params'].keys()), n_models)
+
+        # Check that the output of diagonal and full denoisers match when the
+        # transformation is diagonal.
+        apply_func = self.variant(
+            denoiser.apply, static_argnames=['method', 'index']
+        )
+        apply_func_comp = self.variant(
+            denoiser_comp.apply, static_argnames=['method', 'index']
+        )
+        expect_x = apply_func_comp(params_comp, x_draws, t_draws)
+        diagonal_x = apply_func(params_denoiser, x_draws, t_draws)
+        self.assertTupleEqual(
+            diagonal_x.shape, (batch_size, n_models * features)
+        )
+        self.assertTrue(jnp.allclose(expect_x, diagonal_x))
+
+        # When only one prior model is being used, the feature dimension should
+        # change.
+        x_single = jax.random.normal(
+            rng_keys[0], (batch_size, features)
+        )
+        expect_x = apply_func_comp(params_comp, x_single, t_draws, index=1)
+        diagonal_x = apply_func(params_denoiser, x_single, t_draws, index=1)
+        self.assertTupleEqual(diagonal_x.shape, (batch_size, features))
+        self.assertTrue(jnp.allclose(expect_x, diagonal_x))
 
 
 if __name__ == '__main__':

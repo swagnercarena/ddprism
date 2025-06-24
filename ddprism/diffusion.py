@@ -2,7 +2,7 @@ r"""Diffusion helpers. Implementation follows
 https://github.com/francois-rozet/diffusion-priors/priors/diffusion.py
 closely."""
 
-from typing import Sequence
+from typing import Callable, Optional, Sequence
 
 from flax import linen as nn
 import jax
@@ -24,6 +24,85 @@ def matmul(matrix: Array, vector: Array) -> Array:
         Matrix multiply Mv with dimension (*, M)
     """
     return jnp.squeeze((matrix @ vector[..., None]), -1)
+
+
+def cg_batched(
+    lin_transf: Callable[Array, Array], b: Array, maxiter: int = 50,
+    tol: float = 1e-6, safe_divide: float = 1e-32
+) -> Array:
+    """Batched implementation of conjugate gradient method for solving Ax=b.
+
+    Arguments:
+        lin_transf: Linear trasnformation of a vector.
+        b: Right hand side of the linear system.
+        maxiter: Maximum number of iterations of the CG method.
+        tol: Tolerance for residual norm. Can be reached before maxiter.
+
+    Returns:
+        Solution `x` to the equation Ax=b, where A is our linear transformation.
+    """
+    # Initial guess is zeros.
+    x = jnp.zeros_like(b)
+    resid = b - lin_transf(x)
+    p_vec = resid
+    r_norm = jnp.sum(resid * resid, axis=-1, keepdims=True)
+
+    def cond(state):
+        """Condition for halting CG calculation."""
+        k, _, _, _, norm_cur = state
+        # Continue as long as residual is larger than tolerance and we haven't
+        # reached max iterations.
+        return (k < maxiter) & (jnp.max(jnp.sqrt(norm_cur)) > tol)
+
+
+    def _safe_divide(
+        numerator: Array, denominator: Array, floor: Optional[float] = 1e-32
+    ) -> Array:
+        """Safe division to avoid floating point errors causing overflow.
+
+        Args:
+            numerator: Numerator
+            denominator: Denominator
+            floor: Minimum value of denominator.
+
+        Returns:
+            Save division.
+        """
+        return numerator / jnp.maximum(denominator, floor)
+
+
+    def cg_step(state):
+        """Step of CG method."""
+        k, x, resid, p_vec, r_norm = state
+        p_transf = lin_transf(p_vec)
+
+        # Calculate the coefficient of the current conjugate vector.
+        alpha_denom = jnp.sum(p_vec * p_transf, -1, keepdims=True)
+        broken = ~jnp.isfinite(alpha_denom) | (alpha_denom <= 0)
+        alpha = jnp.where(
+            broken, 0.0, _safe_divide(r_norm, alpha_denom, safe_divide)
+        )
+
+        # Add the conjugate vector to get the next solution.
+        x = jnp.where(broken, x, x + alpha * p_vec)
+
+        # Calculate the new residual.
+        resid = jnp.where(broken, resid, resid - alpha * p_transf)
+        r_norm_new = jnp.sum(resid * resid, -1, keepdims=True)
+
+        # Get the next p vector using the residual.
+        beta = jnp.where(
+            r_norm == 0.0, 0.0, _safe_divide(r_norm_new, r_norm, safe_divide)
+        )
+        p_vec = jnp.where(broken, resid, resid + beta * p_vec)
+
+        return (k + 1, x, resid, p_vec, r_norm_new)
+
+    # Run the cg method until convergence or max iterations.
+    k = 0
+    _, x, *_ = jax.lax.while_loop(cond, cg_step, (k, x, resid, p_vec, r_norm))
+
+    return x
 
 
 class VESDE(nn.Module):
@@ -252,6 +331,8 @@ class PosteriorDenoiserJoint(nn.Module):
         maxiter: Maximum iterations when solving using conjugate gradient.
         use_dplr: If True, use DPLR representation for cov_y instead of a
             full matrix. Default is false.
+        safe_divide: Minimum value allowed for denominators in division within
+            conjugate gradient calculations.
 
     Notes:
         Can also be used as a regular posterior denoiser if only one denoiser
@@ -262,6 +343,7 @@ class PosteriorDenoiserJoint(nn.Module):
     rtol: float = 1e-3
     maxiter: int = 1
     use_dplr: bool = False
+    safe_divide: float = 1e-32
 
     @staticmethod
     def _select_mix_matrix(matrix: Array, index: int = None) -> Array:
@@ -435,16 +517,149 @@ class PosteriorDenoiserJoint(nn.Module):
 
         # Computes the score using conjugate gradient method.
         b = y.value - y_exp
-        v, _ = jax.scipy.sparse.linalg.cg(
-            A=cov_y_xt,
-            b=b,
-            tol=self.rtol,
-            maxiter=self.maxiter,
-        )
+        v = cg_batched(cov_y_xt, b, self.maxiter, self.rtol, self.safe_divide)
 
         cov_t_score = jnp.concat(
             [
                 cov_t_list[i] * vjp_list[i](matmul(A_t[..., i, :, :], v))[0] for
+                i in range(self.n_models(index))
+            ], axis=-1
+        )
+        u_exp = jnp.concat(x_exp_list, axis=-1)
+
+        # Returns E[u|u_t] + Cov_t * \score_{u_t}[log p (y|u_t)].
+        return u_exp + cov_t_score
+
+
+class PosteriorDenoiserJointDiagonal(PosteriorDenoiserJoint):
+    r"""Joint posterior denoiser model for stacked source u = [x^1 ,... ,x^N_s].
+
+    .. math:: f(u_t) \approx E[u|u_t] + Cov_t * \score_{u_t}[log p (y|u_t)]
+
+    Arguments:
+        denoiser_models: List of denoiser models for each source prior.
+        y_features: Number of features in y space.
+        rtol: Tolerance to use when solving using conjugate gradient.
+        maxiter: Maximum iterations when solving using conjugate gradient.
+        use_dplr: If True, use DPLR representation for cov_y instead of a
+            full matrix. Default is false.
+        safe_divide: Minimum value allowed for denominators in division within
+            conjugate gradient calculations.
+
+    Notes:
+        Unlike PosteriorDenoiserJoint, this implementation assumes that the A
+        matrix is diagonal (and therefore that x_features = y_features).
+    """
+
+    @staticmethod
+    def _select_mix_matrix(matrix: Array, index: int = None) -> Array:
+        """Return mixing matrix with index selections.
+
+        Arguments:
+            matrix: All the mixing matrices.
+            index: Optional parameter specifying which of the models to
+                use. Mainly used for Gibbs sampling.
+
+        Returns:
+            Mixing matrix with index selection.
+        """
+        if index is None:
+            return matrix
+        return matrix[..., index:index+1, :]
+
+    @nn.compact
+    def __call__(
+        self, ut: Array, t: Array, train: bool = False, index: int = None,
+    ) -> Array:
+        """Call the posterior score model and rescale for better performance.
+
+        Arguments:
+            ut: The noisy draws with shape (*, n_models * D).
+            t: Time with shape (*)
+            train: Train keyword passed to denoisers.
+            index: Optional parameter specifying which of the models to
+                use. Mainly used for Gibbs sampling.
+
+        Returns
+            Expectation and scaled score.
+        """
+        # Get the x features from the shape and number of models.
+        x_features = ut.shape[-1] // self.n_models(index)
+
+        # Initialize our y and A matrix. The initialized shape is all that
+        # matters. The correct values will be passed in as a variable.
+        out_shape = ut.shape[:-1] + (self.y_features,)
+        y = self.variable(
+            "variables", "y", lambda: jnp.ones(out_shape)
+        )
+
+        assert x_features == self.y_features # Diagonal A requires D_y = D_x.
+        # One A matrix per source.
+        A_var = self.variable(
+            "variables", "A",
+            lambda: jnp.ones(
+                ut.shape[:-1] + (self.n_models(), x_features)
+            )
+        )
+        A = self._select_mix_matrix(A_var.value, index) # A.value call in function.
+
+        # Use DPLR matrix if requested.
+        if self.use_dplr:
+            cov_y = self.variable(
+                "variables", "cov_y",
+                lambda: linalg.DPLR(jnp.zeros(out_shape), None, None)
+            )
+        else:
+            cov_y = self.variable(
+                "variables", "cov_y",
+                lambda: jnp.zeros(out_shape + (self.y_features,))
+            )
+
+        # We want to return the score and the expectation for the u vector that
+        # is the concatenation of all the x vectors.
+        sigma_t_list = jnp.moveaxis(self.sde_sigma(t, index), -1, 0)
+        cov_t_list = [sigma_t[..., None] ** 2 for sigma_t in sigma_t_list]
+
+        # Our denoisers operate on each of the x values in our list.
+        xt = jnp.split(ut, self.n_models(index), axis=-1)
+
+        # Return list of E[x|x_t] and VJP of E[x|x_t] for each model.
+        x_exp_list, vjp_list = zip(*[
+            jax.vjp(lambda x: model(x, t, train), xt_split) for
+            (xt_split, model) in zip(
+                xt, self.denoiser_models_idx(index)
+            )
+        ])
+
+        # Returns E[y]. Deal with batch dimension for A.
+        y_exp = sum(
+            A[..., i, :] * x_exp
+            for i, x_exp in enumerate(x_exp_list)
+        )
+
+        # Compute Cov[y|x_t] function for solve.
+        def cov_y_xt(v):
+            # Start with the covariance of y.
+            value = matmul(cov_y.value, v)
+
+            # Add the variance from each model.
+            for i in range(self.n_models(index)):
+                value += (
+                    cov_t_list[i] * (
+                        A[..., i, :] *
+                        vjp_list[i](A[..., i, :] * v)[0]
+                    )
+                )
+
+            return value
+
+        # Computes the score using conjugate gradient method.
+        b = y.value - y_exp
+        v = cg_batched(cov_y_xt, b, self.maxiter, self.rtol, self.safe_divide)
+
+        cov_t_score = jnp.concat(
+            [
+                cov_t_list[i] * vjp_list[i](A[..., i, :] * v)[0] for
                 i in range(self.n_models(index))
             ], axis=-1
         )

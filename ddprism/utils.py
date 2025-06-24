@@ -174,9 +174,6 @@ def ppca(key: Array, x: Array, rank: int = 1) -> Tuple[Array, DPLR]:
 
     samples, features = x.shape
 
-    # Only conditions for samples > features are implemented.
-    assert samples > features
-
     # Compute ML estimator of the mean of the distribution.
     # Follows Eq. (12) in the reference.
     mu_x = jnp.mean(x, axis=0)
@@ -184,7 +181,10 @@ def ppca(key: Array, x: Array, rank: int = 1) -> Tuple[Array, DPLR]:
 
     # Computes sample covariance matrix of the observed data.
     # Corresponds to matrix S in Eq. (11) in the reference.
-    c_mat = x.T @ x / samples
+    if samples < features:
+        c_mat = x @ x.T / samples
+    else:
+        c_mat = x.T @ x / samples
 
     # Computes ML estimator of the model covariance matrix, Cov = D + U @ V
     # (Eq. (7) in the reference), where D = sigma^2 * I, U = W, V = W^T.
@@ -198,6 +198,11 @@ def ppca(key: Array, x: Array, rank: int = 1) -> Tuple[Array, DPLR]:
     else:
         l_mat, q_mat = jnp.linalg.eigh(c_mat)
         l_mat, q_mat = l_mat[-rank:], q_mat[:, -rank:]
+
+    # Deal with having too few samples.
+    if samples < features:
+        q_mat = x.T @ q_mat
+        q_mat = q_mat / jnp.linalg.norm(q_mat, axis=0)
 
     # Computes the diagonal part of the covariance matrix.
     # Assuming isotropic noise model, each entry of the covariance matrix is

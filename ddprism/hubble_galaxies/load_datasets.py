@@ -1,6 +1,6 @@
 """Module for generating dataset realizations of grassy MNIST."""
 import multiprocessing
-from typing import Callable, Optional, Sequence, Tuple
+from typing import Generator, Optional, Sequence
 
 from datasets import load_dataset
 from einops import rearrange
@@ -15,8 +15,8 @@ def get_dataloader(
     rng: Sequence[int], dset_name: str, dataset_size: int,
     sample_batch_size: int, pmap_dim: int, norm: Optional[float] = 1.0,
     arcsinh_scaling: Optional[float] = 1.0, data_max: Optional[float] = jnp.inf,
-    flatten=True
-) -> Tuple[Callable[[], Tuple[np.ndarray, Sequence[linalg.DPLR]]], np.ndarray]:
+    flatten=True,  n_models: int=1
+) -> Generator[np.ndarray, Sequence[linalg.DPLR], np.ndarray]:
     """Get iterator for loading observations and covariance.
 
     Notes:
@@ -76,7 +76,20 @@ def get_dataloader(
             for cy in cov_y_all:
                 cov_y.append(linalg.DPLR(diagonal=cy))
 
-            yield obs, cov_y
+            # Create an A matrix for the observations, which is the reshaped
+            # mask.
+            A_mat = rearrange(
+                batch['image_mask'], mapping, M=pmap_dim, N=sample_batch_size
+            )
+            # Tile the A matrix to match the number of models.
+            if flatten:
+                A_mat = jnp.tile(A_mat[:, :, :, None], (1, 1, 1, n_models, 1))
+            else:
+                A_mat = jnp.tile(
+                    A_mat[:, :, :, None], (1, 1, 1, n_models, 1, 1, 1)
+                )
+
+            yield obs, cov_y, A_mat
 
 
 def get_A_mat(

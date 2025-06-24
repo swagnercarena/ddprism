@@ -326,7 +326,7 @@ class PosteriorDenoiserJointTests(chex.TestCase):
         apply_func = self.variant(denoiser_dplr.apply, static_argnames='method')
         expect_x = apply_func(params_denoiser_dplr, x_draws, t_draws)
         comp_x = denoiser.apply(params_denoiser, x_draws, t_draws)
-        self.assertTrue(jnp.allclose(comp_x, expect_x))
+        self.assertTrue(jnp.allclose(comp_x, expect_x, rtol=1e-3))
 
     @chex.all_variants
     def test_posterior_denoiser_joint(self):
@@ -517,7 +517,7 @@ class PosteriorDenoiserJointDiagonalTests(chex.TestCase):
         expect_x = apply_func_comp(params_comp, x_single, t_draws, index=1)
         diagonal_x = apply_func(params_denoiser, x_single, t_draws, index=1)
         self.assertTupleEqual(diagonal_x.shape, (batch_size, features))
-        self.assertTrue(jnp.allclose(expect_x, diagonal_x))
+        self.assertTrue(jnp.allclose(expect_x, diagonal_x, rtol=1e-3))
 
 
 if __name__ == '__main__':

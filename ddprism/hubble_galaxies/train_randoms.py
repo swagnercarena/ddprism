@@ -16,7 +16,6 @@ from tqdm import tqdm
 import wandb
 
 from ddprism import diffusion
-from ddprism import linalg
 from ddprism import training_utils
 from ddprism import utils
 

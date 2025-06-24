@@ -11,8 +11,8 @@ def get_config():
 
     # Parameters for dataset generation
     config.dataset_size = 4096
-    config.data_max = 1.0
-    config.arcsinh_scaling = 1.0
+    config.data_max = 2.0
+    config.arcsinh_scaling = 0.1
     config.data_norm = 0.2
 
     # Parameters for the Denoisers.

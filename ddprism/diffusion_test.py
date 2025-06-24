@@ -8,10 +8,10 @@ from flax import linen as nn
 import jax
 import jax.numpy as jnp
 
-from galaxy_diffusion import diffusion
-from galaxy_diffusion import embedding_models
-from galaxy_diffusion import linalg
-from galaxy_diffusion.linalg_test import _create_DPLR_instance
+from ddprism import diffusion
+from ddprism import embedding_models
+from ddprism import linalg
+from ddprism.linalg_test import _create_DPLR_instance
 
 
 class SDETests(chex.TestCase):

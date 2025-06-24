@@ -90,15 +90,3 @@ def get_dataloader(
                 )
 
             yield obs, cov_y, A_mat
-
-
-def get_A_mat(
-    image_shape: Sequence[int], sample_batch_size: int, n_models: int=1
-):
-    """Get A matrix for given image shape. Assume identity (no mask)."""
-    # Generate the A matrix without the sampling batch dimension.
-    feat_dim = image_shape[0] * image_shape[1] * image_shape[2]
-    A_mat = jnp.ones((1, n_models, feat_dim))
-
-    # Add the sampling batch dimension.
-    return jnp.tile(A_mat, (sample_batch_size, 1, 1))

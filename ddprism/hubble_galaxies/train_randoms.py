@@ -124,13 +124,8 @@ def main(_):
     # local memory. Every time we call the dataloader, we get a new chunk of
     # images of size config.dataset_size.
     with jax.default_device(jax.local_devices(backend="cpu")[0]):
-        rand_obs, cov_y_list = next(rand_dataloader)
+        rand_obs, cov_y_list, A_mat = next(rand_dataloader)
     image_shape = (NUMPIX, NUMPIX, 1)
-
-    # Prepare the A matrix and covariance for sampling.
-    A_mat = jax_utils.replicate(
-        load_datasets.get_A_mat(image_shape, config.sample_batch_size)
-    )
 
     # Initialize our Gaussian state.
     rng_state, rng = jax.random.split(rng)
@@ -179,15 +174,15 @@ def main(_):
         params = jax_utils.replicate(post_state_params)
 
         pbar = tqdm(
-            zip(rand_obs, cov_y_list, rng_samp), total=(len(rng_samp)),
+            zip(rand_obs, cov_y_list, A_mat, rng_samp), total=(len(rng_samp)),
             desc='Sample', leave=False
         )
-        for rand_batch, cov_y, rng_pmap in pbar:
+        for rand_batch, cov_y, A_batch, rng_pmap in pbar:
             x_post.append(
                 jax.device_put(
                     sample_pmap(
                         rand_batch, rng_pmap, post_state_gauss, params,
-                        A_mat, cov_y
+                        A_batch, cov_y
                     ),
                     jax.local_devices(backend="cpu")[0]
                 )
@@ -204,7 +199,7 @@ def main(_):
 
         # Load a new batch
         with jax.default_device(jax.local_devices(backend="cpu")[0]):
-            rand_obs, cov_y_list = next(rand_dataloader)
+            rand_obs, cov_y_list, A_mat = next(rand_dataloader)
 
     # Save our initial samples.
     ckpt = {'x_post': jax.device_get(x_post), 'config': config.to_dict()}
@@ -271,7 +266,7 @@ def main(_):
         # Generate new posterior samples with our model using a new draw
         # of examples.
         with jax.default_device(jax.local_devices(backend="cpu")[0]):
-            rand_obs, cov_y_list = next(rand_dataloader)
+            rand_obs, cov_y_list, A_mat = next(rand_dataloader)
         rng_samp, rng = jax.random.split(rng)
         rng_samp = jax.jax.random.split(
             rng_samp, (rand_obs.shape[0], jax.device_count())
@@ -280,14 +275,14 @@ def main(_):
         params = jax_utils.replicate({'denoiser_models_0': ema.params})
 
         pbar = tqdm(
-            zip(rand_obs, cov_y_list, rng_samp), total=(len(rng_samp)),
+            zip(rand_obs, cov_y_list, A_mat, rng_samp), total=(len(rng_samp)),
             desc='Sample', leave=False
         )
-        for rand_batch, cov_y, rng_pmap in pbar:
+        for rand_batch, cov_y, A_batch, rng_pmap in pbar:
             x_post.append(
                 jax.device_put(
                     sample_pmap(
-                        rand_batch, rng_pmap, post_state_unet, params, A_mat,
+                        rand_batch, rng_pmap, post_state_unet, params, A_batch,
                         cov_y
                     ),
                     jax.local_devices(backend="cpu")[0]

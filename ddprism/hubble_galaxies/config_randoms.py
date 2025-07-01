@@ -30,7 +30,7 @@ def get_config():
     config.post_use_dplr = True
 
     # Training parameters.
-    config.lr_init_val = 1e-3
+    config.lr_init_val = 1e-5
     config.epochs = 4096
     config.em_laps = 32
     config.gaussian_em_laps = 4

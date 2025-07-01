@@ -18,6 +18,7 @@ import wandb
 from ddprism import diffusion
 from ddprism import training_utils
 from ddprism import utils
+from ddprism.corrupted_mnist import metrics
 
 from build_parent_sample import NUMPIX
 import load_datasets
@@ -242,6 +243,21 @@ def main(_):
     checkpoint_manager.save(0, ckpt, save_kwargs={'save_args': save_args})
     checkpoint_manager.wait_until_finished()
 
+    # Log our initial metrics.
+    wandb.log(
+        {
+            'snr': metrics.compute_snr(x_post[1][:config.eval_samples]),
+            'sparsity': metrics.compute_wavelet_sparsity(
+                rearrange(
+                    x_post[1][:config.eval_samples],
+                    '... (H W C) -> ... H W C',
+                    H=image_shape[0], W=image_shape[1], C=image_shape[2]
+                )
+            )
+        },
+        step=0
+    )
+
     # Initialize our state and posterior state.
     rng_state, rng = jax.random.split(rng, 2)
     learning_rate_fn = optax.cosine_decay_schedule(
@@ -344,6 +360,21 @@ def main(_):
         save_args = orbax_utils.save_args_from_target(ckpt)
         checkpoint_manager.save(
             lap + 1, ckpt, save_kwargs={'save_args': save_args}
+        )
+
+        # Log our metrics.
+        wandb.log(
+            {
+                'snr': metrics.compute_snr(x_post[1][:config.eval_samples]),
+                'sparsity': metrics.compute_wavelet_sparsity(
+                    rearrange(
+                        x_post[1][:config.eval_samples],
+                        '... (H W C) -> ... H W C',
+                        H=image_shape[0], W=image_shape[1], C=image_shape[2]
+                    )
+                )
+            },
+            step=(lap * config.epochs + epoch)
         )
 
         # Initialize our next state with the current parameters.

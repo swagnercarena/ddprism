@@ -6,6 +6,7 @@ from flax.training import train_state
 import jax
 from jax import Array
 import jax.numpy as jnp
+from kymatio.jax import Scattering2D
 import optax
 from orbax.checkpoint import CheckpointManager, CheckpointManagerOptions
 from orbax.checkpoint import PyTreeCheckpointer
@@ -281,3 +282,76 @@ def pq_mass(dist_1, dist_2, **kwargs) -> Array:
     chi2_vals = pqm_chi2(dist_1, dist_2, **kwargs)
 
     return jnp.mean(chi2_vals)
+
+
+def compute_snr(signal: Array) -> Array:
+    """Computes the signal-to-noise ratio of an image or signal.
+
+    SNR is calculated as the ratio of the peak signal power to the variance of
+    the signal. For N-dimensional signals (N<=3), we compute this over all dimensions.
+
+    Arguments:
+        signal: Input signal with shape: (N, L), (N, H, W), or (N, H, W, C)
+            where N is the batch dimension if present.
+
+    Returns:
+        SNR value(s) in decibels.
+
+    Notes:
+        Since we do not know the true signal, we use the peak signal power as a
+        proxy for the true signal.
+    """
+    # Handle different input dimensions
+    ndim = signal.ndim
+    if ndim > 4 or ndim < 2:
+        raise ValueError(
+            f"Signal must have 2-4 dimensions (got {ndim}). "
+            "Expected shapes: (N,L), (N,H,W), or (N,H,W,C)"
+        )
+
+    # Compute peak signal power over all non-batch dimensions
+    max_power = jnp.max(signal ** 2, axis=tuple(range(1, signal.ndim)))
+
+    # Compute signal variance over all non-batch dimensions
+    variance = jnp.var(signal, axis=tuple(range(1, signal.ndim)))
+
+    # Compute SNR in decibels, adding small epsilon to avoid division by zero
+    snr_db = 10 * jnp.log10(max_power / (variance + 1e-10))
+
+    return snr_db
+
+
+def compute_wavelet_sparsity(
+    signal: Array, levels: int = 3, threshold: float = 3.0
+) -> float:
+    """Compute sparsity of wavelet coefficients above a threshold.
+
+    Arguments:
+        signal: Input image with shape (H, W, C) or batch of images
+            (N, H, W, C)
+        levels: Number of levels to use for wavelet transform.
+        threshold: Threshold for wavelet coefficients (in units of standard
+            deviation).
+
+    Returns:
+        Fraction of wavelet coefficients above a threshold.
+
+    Notes:
+        Assume signal has only one channel.
+    """
+    # Compute wavelet transform.
+    scatt_transform = jax.vmap(
+        Scattering2D(levels, signal.shape[1:-1]).scattering
+    )
+    coeffs = scatt_transform(signal[..., 0])
+
+    # Estimate the standard deviations using the median absolute deviation.
+    mad = jnp.median(jnp.abs(coeffs), axis=(1,2,3), keepdims=True)
+    # Convert to standard deviation assuming normal distribution.
+    # See https://en.wikipedia.org/wiki/Median_absolute_deviation.
+    std = mad / 0.6745
+
+    # Set the threshold for each image.
+    imag_threshold = threshold * std
+
+    return jnp.mean(coeffs > imag_threshold)

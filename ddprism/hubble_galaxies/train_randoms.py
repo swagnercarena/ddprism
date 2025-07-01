@@ -18,6 +18,7 @@ import wandb
 from ddprism import diffusion
 from ddprism import training_utils
 from ddprism import utils
+from ddprism.corrupted_mnist import metrics
 
 from build_parent_sample import NUMPIX
 import load_datasets
@@ -205,6 +206,21 @@ def main(_):
         with jax.default_device(jax.local_devices(backend="cpu")[0]):
             rand_obs, cov_y_list, A_mat = next(rand_dataloader)
 
+    # Log our initial metrics.
+    wandb.log(
+        {
+            'snr': metrics.compute_snr(x_post[:config.eval_samples]),
+            'sparsity': metrics.compute_wavelet_sparsity(
+                rearrange(
+                    x_post[:config.eval_samples],
+                    '... (H W C) -> ... H W C',
+                    H=image_shape[0], W=image_shape[1], C=image_shape[2]
+                )
+            )
+        },
+        step=0
+    )
+
     # Save our initial samples.
     ckpt = {'x_post': jax.device_get(x_post), 'config': config.to_dict()}
     save_args = orbax_utils.save_args_from_target(ckpt)
@@ -299,6 +315,21 @@ def main(_):
 
         # Clamp to dataset limits
         x_post = load_datasets.clamp_dataset(x_post, config.data_max)
+
+        # Log our metrics.
+        wandb.log(
+            {
+                'snr': metrics.compute_snr(x_post[:config.eval_samples]),
+                'sparsity': metrics.compute_wavelet_sparsity(
+                    rearrange(
+                        x_post[:config.eval_samples],
+                        '... (H W C) -> ... H W C',
+                        H=image_shape[0], W=image_shape[1], C=image_shape[2]
+                    )
+                )
+            },
+            step=(lap * config.epochs + epoch)
+        )
 
         # Save the state, ema, and some samples.
         ckpt = {

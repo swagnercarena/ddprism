@@ -50,5 +50,6 @@ def get_config():
     config.wandb_kwargs = ConfigDict(
         {'project': 'mvss-cosmos', 'mode': 'online', 'run_name': None}
     )
+    config.eval_samples = 128
 
     return config

@@ -209,7 +209,7 @@ def main(_):
     # Log our initial metrics.
     wandb.log(
         {
-            'snr': metrics.compute_snr(x_post[:config.eval_samples]),
+            'snr': jnp.mean(metrics.compute_snr(x_post[:config.eval_samples])),
             'sparsity': metrics.compute_wavelet_sparsity(
                 rearrange(
                     x_post[:config.eval_samples],
@@ -319,7 +319,9 @@ def main(_):
         # Log our metrics.
         wandb.log(
             {
-                'snr': metrics.compute_snr(x_post[:config.eval_samples]),
+                'snr': jnp.mean(
+                    metrics.compute_snr(x_post[:config.eval_samples])
+                ),
                 'sparsity': metrics.compute_wavelet_sparsity(
                     rearrange(
                         x_post[:config.eval_samples],

@@ -199,7 +199,7 @@ def main(_):
         # memory issues.
         x_post = []
         params = {
-            'denoiser_models_0': grass_params,
+            'denoiser_models_0': randoms_params,
             'denoiser_models_1': post_state_params['denoiser_models_1']
         }
         params = jax_utils.replicate(params)
@@ -222,12 +222,11 @@ def main(_):
         x_post = rearrange(
             jnp.stack(x_post, axis=0), 'K M N ... -> (K M N) ...'
         )
-        x_post = jnp.split(x_post, 2, axis=-1)
-
         # Clamp to dataset limits
         x_post = load_datasets.clamp_dataset(x_post, config.data_max)
+        x_post = jnp.split(x_post, 2, axis=-1)
 
-        # Ge the statistics of the seperate grass sample.
+        # Get the statistics of the galaxies sample.
         rng_ppca, rng = jax.random.split(rng)
         gal_mean, gal_cov = utils.ppca(rng_ppca, x_post[1], rank=4)
         post_state_params['denoiser_models_0']['mu_x'] = gal_mean
@@ -332,10 +331,9 @@ def main(_):
         x_post = rearrange(
             jnp.stack(x_post, axis=0), 'K M N ... -> (K M N) ...'
         )
-        x_post = jnp.split(x_post, 2, axis=-1)
-
         # Clamp to dataset limits
         x_post = load_datasets.clamp_dataset(x_post, config.data_max)
+        x_post = jnp.split(x_post, 2, axis=-1)
 
         # Save the state, ema, and some samples.
         ckpt = {

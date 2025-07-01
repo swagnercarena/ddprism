@@ -165,7 +165,7 @@ def main(_):
     print('Initial EM Gaussian fit.')
     for lap in tqdm(range(config.gaussian_em_laps), desc='EM Lap'):
         rng_samp, rng = jax.random.split(rng)
-        rng_samp = jax.jax.random.split(
+        rng_samp = jax.random.split(
             rng_samp, (rand_obs.shape[0], jax.device_count())
         )
         # Loop over the sampling batches, saving the outputs to cpu to avoid
@@ -272,7 +272,7 @@ def main(_):
         with jax.default_device(jax.local_devices(backend="cpu")[0]):
             rand_obs, cov_y_list, A_mat = next(rand_dataloader)
         rng_samp, rng = jax.random.split(rng)
-        rng_samp = jax.jax.random.split(
+        rng_samp = jax.random.split(
             rng_samp, (rand_obs.shape[0], jax.device_count())
         )
         x_post = []

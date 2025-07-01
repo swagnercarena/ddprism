@@ -16,7 +16,6 @@ from tqdm import tqdm
 import wandb
 
 from ddprism import diffusion
-from ddprism import linalg
 from ddprism import training_utils
 from ddprism import utils
 
@@ -152,15 +151,8 @@ def main(_):
     # local memory. Every time we call the dataloader, we get a new chunk of
     # images of size config.dataset_size.
     with jax.default_device(jax.local_devices(backend="cpu")[0]):
-        gal_obs, cov_y_list = next(gal_dataloader)
+        gal_obs, cov_y_list, A_mat = next(gal_dataloader)
     image_shape = (NUMPIX, NUMPIX, 1)
-
-    # Prepare the A matrix and covariance for sampling.
-    A_mat = jax_utils.replicate(
-        load_datasets.get_A_mat(
-            image_shape, config.sample_batch_size, n_models=2
-        )
-    )
 
     # Initialize our Gaussian state.
     rng_state, rng = jax.random.split(rng)
@@ -200,7 +192,7 @@ def main(_):
     print('Initial EM Gaussian fit.')
     for lap in tqdm(range(config.gaussian_em_laps), desc='EM Lap'):
         rng_samp, rng = jax.random.split(rng)
-        rng_samp = jax.jax.random.split(
+        rng_samp = jax.random.split(
             rng_samp, (gal_obs.shape[0], jax.device_count())
         )
         # Loop over the sampling batches, saving the outputs to cpu to avoid
@@ -213,15 +205,15 @@ def main(_):
         params = jax_utils.replicate(params)
 
         pbar = tqdm(
-            zip(gal_obs, cov_y_list, rng_samp), total=(len(rng_samp)),
+            zip(gal_obs, cov_y_list, A_mat, rng_samp), total=(len(rng_samp)),
             desc='Sample', leave=False
         )
-        for gal_batch, cov_y, rng_pmap in pbar:
+        for gal_batch, cov_y, A_batch, rng_pmap in pbar:
             x_post.append(
                 jax.device_put(
                     sample_pmap(
                         gal_batch, rng_pmap, post_state_gauss, params,
-                        A_mat, cov_y
+                        A_batch, cov_y
                     ),
                     jax.local_devices(backend="cpu")[0]
                 )
@@ -231,6 +223,10 @@ def main(_):
             jnp.stack(x_post, axis=0), 'K M N ... -> (K M N) ...'
         )
         x_post = jnp.split(x_post, 2, axis=-1)
+
+        # Clamp to dataset limits
+        x_post = load_datasets.clamp_dataset(x_post, config.data_max)
+
         # Ge the statistics of the seperate grass sample.
         rng_ppca, rng = jax.random.split(rng)
         gal_mean, gal_cov = utils.ppca(rng_ppca, x_post[1], rank=4)
@@ -239,7 +235,7 @@ def main(_):
 
         # Load a new batch
         with jax.default_device(jax.local_devices(backend="cpu")[0]):
-            rand_obs, cov_y_list = next(gal_dataloader)
+            gal_obs, cov_y_list, A_mat = next(gal_dataloader)
 
     # Save our initial samples.
     ckpt = {'x_post': jax.device_get(x_post), 'config': config.to_dict()}
@@ -306,9 +302,9 @@ def main(_):
         # Generate new posterior samples with our model using a new draw
         # of examples.
         with jax.default_device(jax.local_devices(backend="cpu")[0]):
-            gal_obs, cov_y_list = next(gal_dataloader)
+            gal_obs, cov_y_list, A_mat = next(gal_dataloader)
         rng_samp, rng = jax.random.split(rng)
-        rng_samp = jax.jax.random.split(
+        rng_samp = jax.random.split(
             rng_samp, (gal_obs.shape[0], jax.device_count())
         )
         x_post = []
@@ -319,14 +315,14 @@ def main(_):
         params = jax_utils.replicate(params)
 
         pbar = tqdm(
-            zip(gal_obs, cov_y_list, rng_samp), total=(len(rng_samp)),
+            zip(gal_obs, cov_y_list, A_mat, rng_samp), total=(len(rng_samp)),
             desc='Sample', leave=False
         )
-        for gal_batch, cov_y, rng_pmap in pbar:
+        for gal_batch, cov_y, A_batch, rng_pmap in pbar:
             x_post.append(
                 jax.device_put(
                     sample_pmap(
-                        gal_batch, rng_pmap, post_state_unet, params, A_mat,
+                        gal_batch, rng_pmap, post_state_unet, params, A_batch,
                         cov_y
                     ),
                     jax.local_devices(backend="cpu")[0]
@@ -337,6 +333,9 @@ def main(_):
             jnp.stack(x_post, axis=0), 'K M N ... -> (K M N) ...'
         )
         x_post = jnp.split(x_post, 2, axis=-1)
+
+        # Clamp to dataset limits
+        x_post = load_datasets.clamp_dataset(x_post, config.data_max)
 
         # Save the state, ema, and some samples.
         ckpt = {

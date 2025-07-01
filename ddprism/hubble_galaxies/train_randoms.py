@@ -191,7 +191,11 @@ def main(_):
         x_post = rearrange(
             jnp.stack(x_post, axis=0), 'K M N ... -> (K M N) ...'
         )
-        # Ge the statistics of the seperate grass sample.
+
+        # Clamp to dataset limits
+        x_post = load_datasets.clamp_dataset(x_post, config.data_max)
+
+        # Get the statistics of the seperate randoms sample.
         rng_ppca, rng = jax.random.split(rng)
         rand_mean, rand_cov = utils.ppca(rng_ppca, x_post, rank=4)
         post_state_params['denoiser_models_0']['mu_x'] = rand_mean
@@ -292,6 +296,9 @@ def main(_):
         x_post = rearrange(
             jnp.stack(x_post, axis=0), 'K M N ... -> (K M N) ...'
         )
+
+        # Clamp to dataset limits
+        x_post = load_datasets.clamp_dataset(x_post, config.data_max)
 
         # Save the state, ema, and some samples.
         ckpt = {

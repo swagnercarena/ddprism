@@ -16,7 +16,7 @@ def get_config():
     config.data_norm = 0.2
 
     # Parameters for the Denoisers.
-    config.sde = ConfigDict({'a': 1e-2, 'b': 1e2})
+    config.sde = ConfigDict({'a': 1e-2, 'b': 1e1}) # Remaining std is 5e-2.
     config.hid_channels = (64, 128, 256, 256, 512)
     config.hid_blocks = (2, 2, 2, 2, 2)
     config.kernel_size = (3, 3)
@@ -30,7 +30,7 @@ def get_config():
     config.post_use_dplr = True
 
     # Training parameters.
-    config.lr_init_val = 1e-5
+    config.lr_init_val = 1e-3
     config.epochs = 4096
     config.em_laps = 32
     config.gaussian_em_laps = 4
@@ -39,10 +39,10 @@ def get_config():
 
     # Sampling arguments
     config.sampling_kwargs = ConfigDict(
-        {'steps': 64, 'sampler': 'pc', 'corrections': 1, 'tau': 1e-3}
+        {'steps': 64, 'sampler': 'pc', 'corrections': 1, 'tau': 1e-1}
     )
     config.gaussian_sampling_kwargs = ConfigDict(
-        {'steps': 16, 'sampler': 'pc', 'corrections': 1, 'tau': 1e-3}
+        {'steps': 64, 'sampler': 'pc', 'corrections': 1, 'tau': 1e-1}
     )
     config.sample_batch_size = 16
 

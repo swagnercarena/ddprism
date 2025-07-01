@@ -1,4 +1,5 @@
 """Module for generating dataset realizations of grassy MNIST."""
+from locale import normalize
 import multiprocessing
 from typing import Generator, Optional, Sequence
 
@@ -9,6 +10,30 @@ import jax.numpy as jnp
 import numpy as np
 
 from ddprism import linalg
+
+
+def clamp_dataset(dataset: jnp.ndarray, data_max: float) -> jnp.ndarray:
+    """Clamp the dataset to the given data_max."""
+    dataset = jnp.maximum(dataset, -data_max)
+    dataset = jnp.minimum(dataset, data_max)
+    return dataset
+
+
+def normalize_dataset(
+    dataset: jnp.ndarray, arcsinh_scaling: float, norm: float, data_max: float
+) -> jnp.ndarray:
+    """Normalize the dataset to the given norm."""
+    dataset = jnp.arcsinh(dataset / arcsinh_scaling) * norm
+    dataset = clamp_dataset(dataset, data_max)
+    return dataset
+
+
+def unnormalize_dataset(
+    dataset: jnp.ndarray, arcsinh_scaling: float, norm: float
+) -> jnp.ndarray:
+    """Unnormalize the dataset to the given norm."""
+    dataset = jnp.sinh(dataset / norm) * arcsinh_scaling
+    return dataset
 
 
 def get_dataloader(
@@ -54,9 +79,7 @@ def get_dataloader(
             obs = rearrange(
                 batch['image_flux'], mapping, M=pmap_dim, N=sample_batch_size
             )
-            obs = jnp.arcsinh(obs / arcsinh_scaling) * norm
-            obs = jnp.minimum(obs, data_max)
-            obs = jnp.maximum(obs, -data_max)
+            obs = normalize_dataset(obs, arcsinh_scaling, norm, data_max)
 
             # If inverse variance is zero then we know the value should be
             # masked. Instead, set the variance to a large number. Must also

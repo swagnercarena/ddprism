@@ -8,7 +8,6 @@ import jax
 import jax.numpy as jnp
 from jax import Array
 from einops import rearrange
-from wandb.util import downsample
 
 
 def reflect_pad(x: Array, kernel_size: Sequence[int]) -> Array:
@@ -105,7 +104,7 @@ class AdaLNZeroModulation(nn.Module):
     activation: Callable[..., nn.Module] = nn.silu
 
     @nn.compact
-    def __call__(self, t: Array) -> tuple[Array, Array, Array]:
+    def __call__(self, t: Array) -> Tuple[Array, Array, Array]:
         """Returns (gamma,beta,alpha) for adaLN-Zero
 
         Arguments:

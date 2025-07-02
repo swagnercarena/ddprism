@@ -11,8 +11,6 @@ def get_config():
     config.dataset_size = 2048
 
     # Sampling arguments
-    config.sampling_kwargs = ConfigDict(
-        {'steps': 64, 'sampler': 'pc', 'corrections': 1, 'tau': 1e-3}
-    )
+    config.sampling_kwargs.steps = 128
 
     return config

@@ -8,6 +8,24 @@ import jax
 import jax.numpy as jnp
 from jax import Array
 from einops import rearrange
+from wandb.util import downsample
+
+
+def reflect_pad(x: Array, kernel_size: Sequence[int]) -> Array:
+    """Pads spatial dimensions of image by reflection.
+
+    Arguments:
+        x: Input tensor (..., H, W, C).
+        kernel_size: Convolutional kernel size, e.g. (3, 3).
+
+    Returns:
+        Padded image with shape (..., H + 2 * pad_h, W + 2 * pad_w, C).
+    """
+    assert len(kernel_size) == 2, "Only 2-D kernels supported."
+    pad_h = kernel_size[0] // 2
+    pad_w = kernel_size[1] // 2
+    pad_cfg = [(0, 0), (pad_h, pad_h), (pad_w, pad_w), (0, 0)]
+    return jnp.pad(x, pad_cfg, mode="reflect")
 
 
 def positional_embedding(pos, emb_features: int = 64):
@@ -123,7 +141,7 @@ class ResBlock(nn.Module):
         emb_features: Size of embedding vector for LayerNorm modulation.
         dropout_rate: Dropout rate. Default is 0 (no dropout).
         activation: Activation function.
-        kernel_sizex: Size of convolutional kernel. Default is (3,3).
+        kernel_size: Size of convolutional kernel. Default is (3,3).
         padding: a sequence of n (low, high) integer pairs that give the padding
             to apply before and after each spatial dimension.
     """
@@ -132,7 +150,6 @@ class ResBlock(nn.Module):
     dropout_rate: float = 0.0
     activation: Callable[..., nn.Module] = nn.silu
     kernel_size: Sequence[int] = (3, 3)
-    padding: Sequence[Tuple[int, int]] = None
 
     @nn.compact
     def __call__(self, x: Array, t: Array, train: bool = True) -> Array:
@@ -146,8 +163,6 @@ class ResBlock(nn.Module):
         Returns:
             Residual block output.
         """
-        # Set the padding to same if none is provided.
-        padding = 'same' if self.padding is None else self.padding
         # Perform adaLN-Zero modulation to condition on t.
         gamma, beta, alpha = (
             AdaLNZeroModulation(self.channels, self.emb_features)(t)
@@ -156,10 +171,11 @@ class ResBlock(nn.Module):
         # Defaults to normalization of 1.
         y = nn.LayerNorm(use_bias=False, use_scale=False)(x)
         y = (gamma + 1) * y + beta
-
-        # Call convolutional layers.
         y = self.activation(y)
-        y = nn.Conv(self.channels, self.kernel_size, padding=padding)(y)
+
+        # First convolution with reflect padding
+        y = reflect_pad(y, self.kernel_size)
+        y = nn.Conv(self.channels, self.kernel_size, padding='VALID')(y)
 
         # Apply dropout and final convolution if non-zero dropout rate.
         if self.dropout_rate > 0.0:
@@ -167,7 +183,10 @@ class ResBlock(nn.Module):
 
         y = nn.LayerNorm()(y)
         y = self.activation(y)
-        y = nn.Conv(self.channels, self.kernel_size, padding=padding)(y)
+
+        # Second convolution with reflect padding
+        y = reflect_pad(y, self.kernel_size)
+        y = nn.Conv(self.channels, self.kernel_size, padding='VALID')(y)
 
         # Last step of adaLN-Zero modulation.
         y = x + (alpha * y / jnp.sqrt(1 + alpha ** 2))
@@ -272,7 +291,8 @@ class Resample(nn.Module):
         )
 
         return jax.image.resize(
-            x, shape=b_shape + s_shape + c_shape, method=self.method
+            x, shape=b_shape + s_shape + c_shape, method=self.method,
+            antialias=True
         )
 
 
@@ -321,32 +341,33 @@ class UNet(nn.Module):
         # Arrays to concatenate when doing the upsampling.
         concat = []
 
-        strides = [2 for k in self.kernel_size]
-        padding = [(k // 2, k // 2) for k in self.kernel_size]
         out_channels = x.shape[-1]
+        downsample_factor = [0.5, 0.5]
 
         # Descend from image to lowest dimension.
         for i, n_blocks in enumerate(self.hid_blocks):
 
             if i == 0:
                 # First convolution shouldn't downsample.
+                x = reflect_pad(x, self.kernel_size)
                 x = nn.Conv(
                     self.hid_channels[i], kernel_size=self.kernel_size,
-                    padding=padding
+                    padding='VALID'
                 )(x)
             else:
                 # Downsample.
+                x = Resample(downsample_factor, method="lanczos3")(x)
+                x = reflect_pad(x, self.kernel_size)
                 x = nn.Conv(
                     self.hid_channels[i], kernel_size=self.kernel_size,
-                    padding=padding, strides=strides
+                    padding='VALID'
                 )(x)
 
             # Residual convolutions without downsampling.
             for _ in range(n_blocks):
                 x = ResBlock(
                     self.hid_channels[i], self.emb_features, self.dropout_rate,
-                    activation=self.activation, kernel_size=self.kernel_size,
-                    padding=padding
+                    activation=self.activation, kernel_size=self.kernel_size
                 )(x, t, train)
                 # Add attention blocks if specified.
                 if str(i) in heads:
@@ -362,7 +383,6 @@ class UNet(nn.Module):
         x = ResBlock(
             self.hid_channels[-1], self.emb_features, self.dropout_rate,
             activation=self.activation, kernel_size=self.kernel_size,
-            padding=padding
         )(x, t, train)
         if str(len(self.hid_blocks) - 1) in heads:
             x = AttBlock(
@@ -372,33 +392,34 @@ class UNet(nn.Module):
         x = ResBlock(
             self.hid_channels[-1], self.emb_features, self.dropout_rate,
             activation=self.activation, kernel_size=self.kernel_size,
-            padding=padding
         )(x, t, train)
 
         # Ascend from lowest dimension to image.
+        upsample_factor = [2.0, 2.0]
         for i, n_blocks in reversed(list(enumerate(self.hid_blocks))):
 
             # Get the memory and convolve in the upsampling.
             c = concat.pop()
             x = jnp.concat((x, c), axis=-1)
+            x = reflect_pad(x, self.kernel_size)
             x = nn.Conv(
                     self.hid_channels[i], kernel_size=self.kernel_size,
-                    padding=padding
+                    padding='VALID'
             )(x) + c # Skip for the memory.
 
             # For layers that aren't the bottom layer, convolve the upsampling.
             if i + 1 < len(self.hid_blocks):
+                x = reflect_pad(x, self.kernel_size)
                 x = nn.Conv(
                     self.hid_channels[i], kernel_size=self.kernel_size,
-                    padding=padding
+                    padding='VALID'
                 )(x)
 
             # Residual convolutions without upsampling.
             for _ in range(n_blocks):
                 x = ResBlock(
                     self.hid_channels[i], self.emb_features, self.dropout_rate,
-                    activation=self.activation, kernel_size=self.kernel_size,
-                    padding=padding
+                    activation=self.activation, kernel_size=self.kernel_size
                 )(x, t, train)
 
                 # Add attention blocks if specified.
@@ -413,7 +434,7 @@ class UNet(nn.Module):
                 x = nn.Dense(out_channels)(x)
             else:
                 # For all other layers conduct an upsampling iteration.
-                x = Resample([float (s) for s in strides], method='nearest')(x)
+                x = Resample(upsample_factor, method='nearest')(x)
 
         return x
 
@@ -479,3 +500,4 @@ class FlatUNet(UNet):
     def feat_dim(self):
         """Get the feature dimension."""
         return self.image_shape[0] * self.image_shape[1] * self.image_shape[2]
+

@@ -14,6 +14,23 @@ class EmbeddingTests(chex.TestCase):
     """Run tests on embedding functions."""
 
     @chex.all_variants
+    def test_reflect_pad(self):
+        """Test reflect padding."""
+        x = jnp.array([[1, 2, 3], [4, 5, 6], [7, 8, 9]])[None, :, :, None]
+        kernel_size = (3, 3)
+        padded_x = self.variant(
+            embedding_models.reflect_pad, static_argnames='kernel_size'
+        )(x, kernel_size)
+
+        self.assertTrue(jnp.allclose(
+            padded_x,
+            jnp.array(
+                [[5, 4, 5, 6, 5], [2, 1, 2, 3, 2], [5, 4, 5, 6, 5],
+                [8, 7, 8, 9, 8], [5, 4, 5, 6, 5]]
+            )[None, :, :, None]
+        ))
+
+    @chex.all_variants
     def test_positional_embedding(self):
         """Test positional embedding."""
         x = jnp.linspace(0, 1, 20)

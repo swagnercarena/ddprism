@@ -1,5 +1,4 @@
 """Module for generating dataset realizations of grassy MNIST."""
-from locale import normalize
 import multiprocessing
 from typing import Generator, Optional, Sequence
 

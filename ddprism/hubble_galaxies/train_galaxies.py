@@ -72,15 +72,15 @@ def create_posterior_train_state(
 
     # Joint Denoiser
     feat_dim = image_shape[0] * image_shape[1] * image_shape[2]
-    posterior_denoiser = diffusion.PosteriorDenoiserJoint(
-        denoiser_models=denoiser_models, y_features=feat_dim * 2,
+    posterior_denoiser = diffusion.PosteriorDenoiserJointDiagonal(
+        denoiser_models=denoiser_models, y_features=feat_dim,
         rtol=config.post_rtol, maxiter=config.post_maxiter,
         use_dplr=config.post_use_dplr
     )
 
     # Initialize posterior denoiser.
     params = posterior_denoiser.init(
-        rng, jnp.ones((1, feat_dim)), jnp.ones((1,))
+        rng, jnp.ones((1, feat_dim * 2)), jnp.ones((1,))
     )
     if mu_x is not None:
         params['params']['denoiser_models_0']['mu_x'] = mu_x

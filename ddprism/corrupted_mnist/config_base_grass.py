@@ -45,8 +45,8 @@ def get_config():
     })
     config.lr_schedule = ConfigDict({
         'type': 'cosine',  # 'cosine', 'exponential', 'constant'
-        'warmup_steps': 1000,
-        'min_lr_ratio': 0.1
+        'warmup_steps': 0,
+        'min_lr_ratio': 0.0
     })
     config.time_sampling = ConfigDict({
         'distribution': 'beta',  # 'beta', 'uniform', 'log_normal'

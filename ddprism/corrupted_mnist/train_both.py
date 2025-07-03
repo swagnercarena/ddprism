@@ -44,9 +44,12 @@ config_flags.DEFINE_config_file(
 )
 
 
-apply_model = jax.pmap( # pylint: disable=invalid-name
-    functools.partial(training_utils.apply_model, pmap=True), axis_name='batch'
-)
+def apply_model_with_config(config):
+    """Create apply_model function with config."""
+    return jax.pmap( # pylint: disable=invalid-name
+        functools.partial(training_utils.apply_model, config=config, pmap=True),
+        axis_name='batch'
+    )
 
 
 update_model = jax.pmap( # pylint: disable=invalid-name

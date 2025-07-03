@@ -31,9 +31,12 @@ config_flags.DEFINE_config_file(
 )
 
 
-apply_model = jax.pmap( # pylint: disable=invalid-name
-    functools.partial(training_utils.apply_model, pmap=True), axis_name='batch'
-)
+def apply_model_with_config(config):
+    """Create apply_model function with config."""
+    return jax.pmap( # pylint: disable=invalid-name
+        functools.partial(training_utils.apply_model, config=config, pmap=True),
+        axis_name='batch'
+    )
 
 
 update_model = jax.pmap( # pylint: disable=invalid-name
@@ -45,9 +48,10 @@ def create_posterior_train_state(
     rng, config, image_shape, mu_x=None, cov_x=None, gaussian=False
 ):
     "Create joint posterior denoiser."
-    learning_rate_fn = optax.cosine_decay_schedule(
-        init_value=config.lr_init_val,
-        decay_steps=config.epochs * config.em_laps
+    # Learning rate is irrelevant for the posterior denoiser because we don't
+    # optimize its parameters directly.
+    learning_rate_fn = training_utils.get_learning_rate_schedule(
+        config, config.lr_init_val, config.epochs
     )
 
     if gaussian:
@@ -78,7 +82,10 @@ def create_posterior_train_state(
     if cov_x is not None:
         params['params']['denoiser_models_0']['cov_x'] = cov_x
 
-    tx = optax.adam(learning_rate_fn)
+    # Use the new configurable optimizer
+    optimizer = training_utils.get_optimizer(config)(learning_rate_fn)
+    grad_clip_norm = config.get('grad_clip_norm', 1.0)
+    tx = optax.chain(optax.clip_by_global_norm(grad_clip_norm), optimizer)
 
     return train_state.TrainState.create(
         apply_fn=posterior_denoiser.apply, params=params['params'], tx=tx
@@ -242,8 +249,8 @@ def main(_):
 
     # Initialize our state and posterior state.
     rng_state, rng = jax.random.split(rng, 2)
-    learning_rate_fn = optax.cosine_decay_schedule(
-        init_value=config.lr_init_val, decay_steps=config.epochs
+    learning_rate_fn = training_utils.get_learning_rate_schedule(
+        config, config.lr_init_val, config.epochs
     )
     state_unet = training_utils.create_train_state_unet(
         rng_state, config, learning_rate_fn, image_shape
@@ -254,6 +261,9 @@ def main(_):
     )
     post_state_unet = jax_utils.replicate(post_state_unet)
     ema = training_utils.EMA(jax_utils.unreplicate(state_unet).params)
+
+    # Create the apply_model function with config
+    apply_model = apply_model_with_config(config)
 
     # Change the sampling parameters to those for the diffusion model.
     sample_pmap = jax.pmap(

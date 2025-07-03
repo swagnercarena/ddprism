@@ -35,6 +35,24 @@ def get_config():
     config.gaussian_em_laps = 32
     config.batch_size = 1920
     config.ema_decay = 0.9999
+    config.grad_clip_norm = 1.0
+    config.optimizer = ConfigDict({
+        'type': 'adam',
+        'beta1': 0.9,
+        'beta2': 0.999,
+        'weight_decay': 0.0,
+        'eps': 1e-8
+    })
+    config.lr_schedule = ConfigDict({
+        'type': 'cosine',  # 'cosine', 'exponential', 'constant'
+        'warmup_steps': 1000,
+        'min_lr_ratio': 0.1
+    })
+    config.time_sampling = ConfigDict({
+        'distribution': 'beta',  # 'beta', 'uniform', 'log_normal'
+        'beta_a': 3.0,
+        'beta_b': 3.0
+    })
 
     # Sampling arguments
     config.sampling_kwargs = ConfigDict(

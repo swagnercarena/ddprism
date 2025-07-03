@@ -179,6 +179,10 @@ sample_gibbs = jax.jit( # pylint: disable=invalid-name
 )
 
 
+def apply_model_with_config(config):
+    """Create apply_model function with config."""
+    return jax.jit(functools.partial(training_utils.apply_model, config=config))
+
 apply_model = jax.jit(training_utils.apply_model) # pylint: disable=invalid-name
 
 

@@ -38,6 +38,23 @@ def apply_model_with_config(config):
     )
 
 
+def compute_metrics_for_samples(x_post, config, image_shape):
+    """Compute metrics for randoms samples."""
+    snr = jnp.mean(metrics.compute_snr(x_post[:config.eval_samples]))
+    sparsity = metrics.compute_wavelet_sparsity(
+        rearrange(
+            x_post[:config.eval_samples],
+            '... (H W C) -> ... H W C',
+            H=image_shape[0], W=image_shape[1], C=image_shape[2]
+        )
+    )
+
+    return {
+        'snr_randoms': snr,
+        'sparsity_randoms': sparsity
+    }
+
+
 update_model = jax.pmap( # pylint: disable=invalid-name
     training_utils.update_model, axis_name='batch'
 )
@@ -213,23 +230,15 @@ def main(_):
         with jax.default_device(jax.local_devices(backend="cpu")[0]):
             rand_obs, cov_y_list, A_mat = next(rand_dataloader)
 
-    # Log our initial metrics.
-    wandb.log(
-        {
-            'snr': jnp.mean(metrics.compute_snr(x_post[:config.eval_samples])),
-            'sparsity': metrics.compute_wavelet_sparsity(
-                rearrange(
-                    x_post[:config.eval_samples],
-                    '... (H W C) -> ... H W C',
-                    H=image_shape[0], W=image_shape[1], C=image_shape[2]
-                )
-            )
-        },
-        step=0
-    )
+    # Compute and save initial metrics.
+    initial_metrics = compute_metrics_for_samples(x_post, config, image_shape)
+    wandb.log(initial_metrics, step=0)
 
     # Save our initial samples.
-    ckpt = {'x_post': jax.device_get(x_post), 'config': config.to_dict()}
+    ckpt = {
+        'x_post': jax.device_get(x_post), 'config': config.to_dict(),
+        'metrics': jax.device_get(initial_metrics)
+    }
     save_args = orbax_utils.save_args_from_target(ckpt)
     checkpoint_manager.save(0, ckpt, save_kwargs={'save_args': save_args})
     checkpoint_manager.wait_until_finished()
@@ -326,28 +335,16 @@ def main(_):
         # Clamp to dataset limits
         x_post = load_datasets.clamp_dataset(x_post, config.data_max)
 
-        # Log our metrics.
-        wandb.log(
-            {
-                'snr': jnp.mean(
-                    metrics.compute_snr(x_post[:config.eval_samples])
-                ),
-                'sparsity': metrics.compute_wavelet_sparsity(
-                    rearrange(
-                        x_post[:config.eval_samples],
-                        '... (H W C) -> ... H W C',
-                        H=image_shape[0], W=image_shape[1], C=image_shape[2]
-                    )
-                )
-            },
-            step=(lap * config.epochs + epoch)
-        )
+        # Compute and save metrics with the state, ema, and samples.
+        lap_metrics = compute_metrics_for_samples(x_post, config, image_shape)
+        wandb.log(lap_metrics, step=(lap * config.epochs + epoch))
 
         # Save the state, ema, and some samples.
         ckpt = {
             'state': jax.device_get(jax_utils.unreplicate(state_unet)),
             'x_post': jax.device_get(x_post),
-            'ema_params': jax.device_get(ema.params), 'config': config.to_dict()
+            'ema_params': jax.device_get(ema.params),
+            'config': config.to_dict(), 'metrics': jax.device_get(lap_metrics)
         }
         save_args = orbax_utils.save_args_from_target(ckpt)
         checkpoint_manager.save(

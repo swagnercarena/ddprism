@@ -46,6 +46,40 @@ def apply_model_with_config(config):
     )
 
 
+def compute_metrics_for_samples(x_post, config, image_shape):
+    """Compute metrics for both randoms and galaxies samples."""
+    # Compute metrics for randoms (x_post[0])
+    snr_randoms = jnp.mean(
+        metrics.compute_snr(x_post[0][:config.eval_samples])
+    )
+    sparsity_randoms = metrics.compute_wavelet_sparsity(
+        rearrange(
+            x_post[0][:config.eval_samples],
+            '... (H W C) -> ... H W C',
+            H=image_shape[0], W=image_shape[1], C=image_shape[2]
+        )
+    )
+
+    # Compute metrics for galaxies (x_post[1])
+    snr_galaxies = jnp.mean(
+        metrics.compute_snr(x_post[1][:config.eval_samples])
+    )
+    sparsity_galaxies = metrics.compute_wavelet_sparsity(
+        rearrange(
+            x_post[1][:config.eval_samples],
+            '... (H W C) -> ... H W C',
+            H=image_shape[0], W=image_shape[1], C=image_shape[2]
+        )
+    )
+
+    return {
+        'snr_randoms': snr_randoms,
+        'sparsity_randoms': sparsity_randoms,
+        'snr_galaxies': snr_galaxies,
+        'sparsity_galaxies': sparsity_galaxies
+    }
+
+
 update_model = jax.pmap( # pylint: disable=invalid-name
     training_utils.update_model, axis_name='batch'
 )
@@ -244,28 +278,18 @@ def main(_):
         with jax.default_device(jax.local_devices(backend="cpu")[0]):
             gal_obs, cov_y_list, A_mat = next(gal_dataloader)
 
-    # Save our initial samples.
-    ckpt = {'x_post': jax.device_get(x_post), 'config': config.to_dict()}
+    # Compute and save initial metrics.
+    initial_metrics = compute_metrics_for_samples(x_post, config, image_shape)
+    ckpt = {
+        'x_post': jax.device_get(x_post), 'config': config.to_dict(),
+        'metrics': jax.device_get(initial_metrics)
+    }
     save_args = orbax_utils.save_args_from_target(ckpt)
     checkpoint_manager.save(0, ckpt, save_kwargs={'save_args': save_args})
     checkpoint_manager.wait_until_finished()
 
     # Log our initial metrics.
-    wandb.log(
-        {
-            'snr': jnp.mean(
-                metrics.compute_snr(x_post[1][:config.eval_samples])
-            ),
-            'sparsity': metrics.compute_wavelet_sparsity(
-                rearrange(
-                    x_post[1][:config.eval_samples],
-                    '... (H W C) -> ... H W C',
-                    H=image_shape[0], W=image_shape[1], C=image_shape[2]
-                )
-            )
-        },
-        step=0
-    )
+    wandb.log(initial_metrics, step=0)
 
     # Initialize our state and posterior state.
     rng_state, rng = jax.random.split(rng, 2)
@@ -363,11 +387,14 @@ def main(_):
         x_post = load_datasets.clamp_dataset(x_post, config.data_max)
         x_post = jnp.split(x_post, 2, axis=-1)
 
-        # Save the state, ema, and some samples.
+        # Compute and save metrics with the state, ema, and samples.
+        lap_metrics = compute_metrics_for_samples(x_post, config, image_shape)
         ckpt = {
             'state': jax.device_get(jax_utils.unreplicate(state_unet)),
             'x_post': jax.device_get(x_post),
-            'ema_params': jax.device_get(ema.params), 'config': config.to_dict()
+            'ema_params': jax.device_get(ema.params),
+            'config': config.to_dict(),
+            'metrics': jax.device_get(lap_metrics)
         }
         save_args = orbax_utils.save_args_from_target(ckpt)
         checkpoint_manager.save(
@@ -375,21 +402,7 @@ def main(_):
         )
 
         # Log our metrics.
-        wandb.log(
-            {
-                'snr': jnp.mean(
-                    metrics.compute_snr(x_post[1][:config.eval_samples])
-                ),
-                'sparsity': metrics.compute_wavelet_sparsity(
-                    rearrange(
-                        x_post[1][:config.eval_samples],
-                        '... (H W C) -> ... H W C',
-                        H=image_shape[0], W=image_shape[1], C=image_shape[2]
-                    )
-                )
-            },
-            step=(lap * config.epochs + epoch)
-        )
+        wandb.log(lap_metrics, step=(lap * config.epochs + epoch))
 
         # Initialize our next state with the current parameters.
         state_unet = training_utils.create_train_state_unet(

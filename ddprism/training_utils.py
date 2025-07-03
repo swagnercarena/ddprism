@@ -37,24 +37,24 @@ def apply_model(state, x, rng, config=None, pmap=False):
     # Get time sampling function and otherwise use default beta distribution.
     sample_time = get_time_sampling_fn(config)
 
-    # diffusion loss
+    # Diffusion loss
     def loss_fn(params):
-        # draw random values of noise and time
+        # Draw random values of noise and time
         rng_z, rng_t, rng_drop = jax.random.split(rng, 3)
         z = jax.random.normal(rng_z, shape=x.shape)
         t = sample_time(rng_t, shape=x.shape[:1])
 
-        # evolve x samples forward in time to get noisy realizations
+        # Evolve x samples forward in time to get noisy realizations
         sigma_t = state.apply_fn({'params': params}, t, method='sde_sigma')
         lmbda_t = 1 / sigma_t**2 + 1
         x_t = state.apply_fn({'params': params}, x, z, t, method='sde_x_t')
 
-        # compute expected denoised values
+        # Compute expected denoised values
         x_expected = state.apply_fn(
             {'params': params}, x_t, t, rngs={'dropout': rng_drop}
         )
 
-        # compute error
+        # Compute error
         error = x_expected - x
         loss = jnp.mean(lmbda_t * jnp.mean(error**2, axis=-1))
         return loss

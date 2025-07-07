@@ -55,37 +55,6 @@ def compute_metrics_for_samples(x_post, config, image_shape):
     }
 
 
-def filter_samples_by_clamp_range(
-    samples, data_max, max_outlier_fraction=0.1
-):
-    """Filter samples where sufficient pixels are outside clamp range.
-
-    Args:
-        samples: Array of samples to filter. Leading dimension is the number of
-            samples, but otherwise the shape is arbitrary.
-        data_max: Maximum absolute value for clamping
-        max_outlier_fraction: Maximum fraction of pixels allowed to be outside
-            clamp range
-
-    Returns:
-        Filtered samples array and number of dropped samples
-    """
-    # Check which pixels are outside the clamp range
-    outside_range = (jnp.abs(samples) > data_max)
-
-    # Calculate fraction of pixels outside range for each sample.
-    outlier_fractions = jnp.mean(
-        outside_range, axis=tuple(range(1, samples.ndim))
-    )
-
-    # Keep samples where outlier fraction is <= max_outlier_fraction
-    keep_mask = outlier_fractions <= max_outlier_fraction
-    filtered_samples = samples[keep_mask]
-    num_dropped = jnp.sum(~keep_mask)
-
-    return filtered_samples, num_dropped
-
-
 update_model = jax.pmap( # pylint: disable=invalid-name
     training_utils.update_model, axis_name='batch'
 )
@@ -249,7 +218,7 @@ def main(_):
         )
 
         # Clamp to dataset limits.
-        x_filt, num_dropped = filter_samples_by_clamp_range(
+        x_filt, num_dropped = load_datasets.filter_samples_by_clamp_range(
             x_post, config.data_max
         )
         # Only keep filter if there are enough samples left.
@@ -370,7 +339,7 @@ def main(_):
         )
 
         # Clamp to dataset limits.
-        x_filt, num_dropped = filter_samples_by_clamp_range(
+        x_filt, num_dropped = load_datasets.filter_samples_by_clamp_range(
             x_post, config.data_max
         )
         # Only keep filter if there are enough samples left.

@@ -22,7 +22,6 @@ from ddprism.corrupted_mnist import metrics
 
 from build_parent_sample import NUMPIX
 import load_datasets
-from train_randoms import filter_samples_by_clamp_range
 
 FLAGS = flags.FLAGS
 flags.DEFINE_string('workdir', None, 'working directory.')
@@ -267,7 +266,7 @@ def main(_):
             jnp.stack(x_post, axis=0), 'K M N ... -> (K M N) ...'
         )
         # Clamp to dataset limits
-        x_filt, num_dropped = filter_samples_by_clamp_range(
+        x_filt, num_dropped = load_datasets.filter_samples_by_clamp_range(
             x_post, config.data_max
         )
         # Only keep filter if there are enough samples left.
@@ -392,7 +391,7 @@ def main(_):
             jnp.stack(x_post, axis=0), 'K M N ... -> (K M N) ...'
         )
         # Clamp to dataset limits
-        x_filt, num_dropped = filter_samples_by_clamp_range(
+        x_filt, num_dropped = load_datasets.filter_samples_by_clamp_range(
             x_post, config.data_max
         )
         # Only keep filter if there are enough samples left.

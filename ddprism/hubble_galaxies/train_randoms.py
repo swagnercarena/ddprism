@@ -243,7 +243,9 @@ def main(_):
     # Save our initial samples.
     ckpt = {
         'x_post': jax.device_get(x_post), 'config': config.to_dict(),
-        'metrics': jax.device_get(initial_metrics)
+        'metrics': jax.device_get(initial_metrics),
+        'rand_obs': jax.device_get(rand_obs),
+        'post_state_params': jax.device_get(post_state_params)
     }
     save_args = orbax_utils.save_args_from_target(ckpt)
     checkpoint_manager.save(0, ckpt, save_kwargs={'save_args': save_args})
@@ -356,7 +358,8 @@ def main(_):
             'state': jax.device_get(jax_utils.unreplicate(state_unet)),
             'x_post': jax.device_get(x_post),
             'ema_params': jax.device_get(ema.params),
-            'config': config.to_dict(), 'metrics': jax.device_get(lap_metrics)
+            'config': config.to_dict(), 'metrics': jax.device_get(lap_metrics),
+            'rand_obs': jax.device_get(rand_obs)
         }
         save_args = orbax_utils.save_args_from_target(ckpt)
         checkpoint_manager.save(

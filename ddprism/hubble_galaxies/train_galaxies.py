@@ -22,6 +22,7 @@ from ddprism.corrupted_mnist import metrics
 
 from build_parent_sample import NUMPIX
 import load_datasets
+from train_randoms import filter_samples_by_clamp_range
 
 FLAGS = flags.FLAGS
 flags.DEFINE_string('workdir', None, 'working directory.')
@@ -201,6 +202,7 @@ def main(_):
     post_state_gauss = create_posterior_train_state(
         rng_state, config, config_randoms, image_shape, gaussian=True
     )
+    # Store params before replication
     post_state_params = post_state_gauss.params
 
     # Prepare post_state_gauss for pmap.
@@ -265,14 +267,20 @@ def main(_):
             jnp.stack(x_post, axis=0), 'K M N ... -> (K M N) ...'
         )
         # Clamp to dataset limits
+        x_filt, num_dropped = filter_samples_by_clamp_range(
+            x_post, config.data_max
+        )
+        # Only keep filter if there are enough samples left.
+        if num_dropped < 0.8 * x_post.shape[0]:
+            x_post = x_filt
         x_post = load_datasets.clamp_dataset(x_post, config.data_max)
         x_post = jnp.split(x_post, 2, axis=-1)
 
         # Get the statistics of the galaxies sample.
         rng_ppca, rng = jax.random.split(rng)
         gal_mean, gal_cov = utils.ppca(rng_ppca, x_post[1], rank=4)
-        post_state_params['denoiser_models_0']['mu_x'] = gal_mean
-        post_state_params['denoiser_models_0']['cov_x'] = gal_cov
+        post_state_params['denoiser_models_1']['mu_x'] = gal_mean
+        post_state_params['denoiser_models_1']['cov_x'] = gal_cov
 
         # Load a new batch
         with jax.default_device(jax.local_devices(backend="cpu")[0]):
@@ -384,6 +392,12 @@ def main(_):
             jnp.stack(x_post, axis=0), 'K M N ... -> (K M N) ...'
         )
         # Clamp to dataset limits
+        x_filt, num_dropped = filter_samples_by_clamp_range(
+            x_post, config.data_max
+        )
+        # Only keep filter if there are enough samples left.
+        if num_dropped < 0.8 * x_post.shape[0]:
+            x_post = x_filt
         x_post = load_datasets.clamp_dataset(x_post, config.data_max)
         x_post = jnp.split(x_post, 2, axis=-1)
 

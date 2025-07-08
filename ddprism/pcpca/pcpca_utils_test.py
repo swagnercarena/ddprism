@@ -5,34 +5,37 @@ import chex
 import jax
 import jax.numpy as jnp
 
+# Enable float64 precision
+jax.config.update("jax_enable_x64", True)
+
 from ddprism.pcpca import pcpca_utils
 
 
 def _create_test_data(rng, batch_size=16, features=5, latent_dim=3):
-        """Create test data for PCPCA functions."""
-        rng_keys = jax.random.split(rng, 6)
+    """Create test data for PCPCA functions."""
+    rng_keys = jax.random.split(rng, 6)
 
-        # Create parameters
-        weights = jax.random.normal(rng_keys[0], (features, latent_dim))
-        log_sigma = jax.random.normal(rng_keys[1], ())
-        params = {'weights': weights, 'log_sigma': log_sigma}
+    # Create parameters
+    weights = jax.random.normal(rng_keys[0], (features, latent_dim))
+    log_sigma = jax.random.normal(rng_keys[1], ())
+    params = {'weights': weights, 'log_sigma': log_sigma}
 
-        # Create observations
-        x_obs = jax.random.normal(rng_keys[2], (batch_size, features))
-        y_obs = jax.random.normal(rng_keys[3], (batch_size, features))
+    # Create observations
+    x_obs = jax.random.normal(rng_keys[2], (batch_size, features))
+    y_obs = jax.random.normal(rng_keys[3], (batch_size, features))
 
-        # Create transformation matrices
-        x_a_mat = jax.random.normal(
-            rng_keys[4], (batch_size, features, features)
-        )
-        y_a_mat = jax.random.normal(
-            rng_keys[5], (batch_size, features, features)
-        )
+    # Create transformation matrices
+    x_a_mat = jax.random.normal(
+        rng_keys[4], (batch_size, features, features)
+    )
+    y_a_mat = jax.random.normal(
+        rng_keys[5], (batch_size, features, features)
+    )
 
-        # Gamma parameter
-        gamma = 0.1
+    # Gamma parameter
+    gamma = 0.1
 
-        return params, x_obs, y_obs, x_a_mat, y_a_mat, gamma
+    return params, x_obs, y_obs, x_a_mat, y_a_mat, gamma
 
 class PCPCAUtilsTests(chex.TestCase):
     """Run tests on PCPCA utility functions."""
@@ -121,11 +124,9 @@ class PCPCAUtilsTests(chex.TestCase):
         auto_grads = jax.grad(loss_func)(params)
 
         # Compare gradients
-        print(grads['weights'])
-        print(auto_grads['weights'])
-        # self.assertTrue(
-        #     jnp.allclose(grads['weights'], auto_grads['weights'], rtol=1e-5)
-        # )
+        self.assertTrue(
+            jnp.allclose(grads['weights'], auto_grads['weights'], rtol=1e-5)
+        )
         self.assertAlmostEqual(
             grads['log_sigma'], auto_grads['log_sigma'], places=5
         )

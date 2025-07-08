@@ -1,14 +1,8 @@
 """Utility functions for PCPCA."""
-from math import log
 from typing import Dict
 
 import jax
 import jax.numpy as jnp
-from numpy import c_
-
-from ddprism.rand_manifolds import random_manifolds
-from ddprism import linalg
-
 
 def loss(
     params: Dict[str, jnp.ndarray], x_obs: jnp.ndarray,
@@ -102,12 +96,13 @@ def loss_grad(
         jnp.transpose(y_a_mat, axes=(0, 2, 1)) @ d_mat_inv @
         y_a_mat @ weights, axis=0
     )
-    grad_weights += - jnp.mean(
+
+    grad_weights += jnp.mean(
         jnp.transpose(x_a_mat, axes=(0, 2, 1)) @ c_mat_inv @
         x_obs[:, :, None] @ x_obs[:, None, :] @ c_mat_inv @ x_a_mat @ weights,
         axis=0
     )
-    grad_weights += gamma * jnp.mean(
+    grad_weights += -gamma * jnp.mean(
         jnp.transpose(y_a_mat, axes=(0, 2, 1)) @ d_mat_inv @
         y_obs[:, :, None] @ y_obs[:, None, :] @ d_mat_inv @ y_a_mat @ weights,
         axis=0
@@ -116,19 +111,21 @@ def loss_grad(
     # Gradient for log sigma.
     grad_sigma = - jnp.mean(jnp.linalg.trace(c_mat_inv))
     grad_sigma += gamma * jnp.mean(jnp.linalg.trace(d_mat_inv))
+
     grad_sigma += jnp.mean(jnp.linalg.trace(
         c_mat_inv @ x_obs[:, :, None] @ x_obs[:, None, :] @ c_mat_inv
     ))
     grad_sigma += - gamma * jnp.mean(jnp.linalg.trace(
         d_mat_inv @ y_obs[:, :, None] @ y_obs[:, None, :] @ d_mat_inv
     ))
+
     grad_sigma *= sigma ** 2
 
     return {'weights': grad_weights, 'log_sigma': grad_sigma}
 
 
 def compute_aux_matrix(
-    weights: jnp.ndarray, a_mat: jnp.ndarray, sigma: float
+    weights: jnp.ndarray, a_mat: jnp.ndarray, sigma: jnp.ndarray
 ) -> jnp.ndarray:
     """Compute the auxillary matrix for PCPCA loss function.
 
@@ -141,7 +138,7 @@ def compute_aux_matrix(
         Auxillary matrix for PCPCA loss function.
     """
     mat_prod = a_mat @ weights @ weights.T @ a_mat.T
-    mat_prod = mat_prod + sigma*jnp.eye(a_mat.shape[0])
+    mat_prod += (sigma ** 2) *jnp.eye(a_mat.shape[0])
 
     return mat_prod
 

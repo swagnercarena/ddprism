@@ -201,6 +201,7 @@ def main(_):
     post_state_gauss = create_posterior_train_state(
         rng_state, config, config_randoms, image_shape, gaussian=True
     )
+    # Store params before replication
     post_state_params = post_state_gauss.params
 
     # Prepare post_state_gauss for pmap.
@@ -265,14 +266,20 @@ def main(_):
             jnp.stack(x_post, axis=0), 'K M N ... -> (K M N) ...'
         )
         # Clamp to dataset limits
+        x_filt, num_dropped = load_datasets.filter_samples_by_clamp_range(
+            x_post, config.data_max
+        )
+        # Only keep filter if there are enough samples left.
+        if num_dropped < 0.4 * x_post.shape[0]:
+            x_post = x_filt
         x_post = load_datasets.clamp_dataset(x_post, config.data_max)
         x_post = jnp.split(x_post, 2, axis=-1)
 
         # Get the statistics of the galaxies sample.
         rng_ppca, rng = jax.random.split(rng)
         gal_mean, gal_cov = utils.ppca(rng_ppca, x_post[1], rank=4)
-        post_state_params['denoiser_models_0']['mu_x'] = gal_mean
-        post_state_params['denoiser_models_0']['cov_x'] = gal_cov
+        post_state_params['denoiser_models_1']['mu_x'] = gal_mean
+        post_state_params['denoiser_models_1']['cov_x'] = gal_cov
 
         # Load a new batch
         with jax.default_device(jax.local_devices(backend="cpu")[0]):
@@ -282,7 +289,9 @@ def main(_):
     initial_metrics = compute_metrics_for_samples(x_post, config, image_shape)
     ckpt = {
         'x_post': jax.device_get(x_post), 'config': config.to_dict(),
-        'metrics': jax.device_get(initial_metrics)
+        'metrics': jax.device_get(initial_metrics),
+        'rand_obs': jax.device_get(gal_obs),
+        'post_state_params': jax.device_get(post_state_params)
     }
     save_args = orbax_utils.save_args_from_target(ckpt)
     checkpoint_manager.save(0, ckpt, save_kwargs={'save_args': save_args})
@@ -384,6 +393,12 @@ def main(_):
             jnp.stack(x_post, axis=0), 'K M N ... -> (K M N) ...'
         )
         # Clamp to dataset limits
+        x_filt, num_dropped = load_datasets.filter_samples_by_clamp_range(
+            x_post, config.data_max
+        )
+        # Only keep filter if there are enough samples left.
+        if num_dropped < 0.4 * x_post.shape[0]:
+            x_post = x_filt
         x_post = load_datasets.clamp_dataset(x_post, config.data_max)
         x_post = jnp.split(x_post, 2, axis=-1)
 
@@ -393,8 +408,8 @@ def main(_):
             'state': jax.device_get(jax_utils.unreplicate(state_unet)),
             'x_post': jax.device_get(x_post),
             'ema_params': jax.device_get(ema.params),
-            'config': config.to_dict(),
-            'metrics': jax.device_get(lap_metrics)
+            'config': config.to_dict(), 'metrics': jax.device_get(lap_metrics),
+            'rand_obs': jax.device_get(gal_obs)
         }
         save_args = orbax_utils.save_args_from_target(ckpt)
         checkpoint_manager.save(

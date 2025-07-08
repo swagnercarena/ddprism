@@ -217,7 +217,13 @@ def main(_):
             jnp.stack(x_post, axis=0), 'K M N ... -> (K M N) ...'
         )
 
-        # Clamp to dataset limits
+        # Clamp to dataset limits.
+        x_filt, num_dropped = load_datasets.filter_samples_by_clamp_range(
+            x_post, config.data_max
+        )
+        # Only keep filter if there are enough samples left.
+        if num_dropped < 0.4 * x_post.shape[0]:
+            x_post = x_filt
         x_post = load_datasets.clamp_dataset(x_post, config.data_max)
 
         # Get the statistics of the seperate randoms sample.
@@ -237,7 +243,9 @@ def main(_):
     # Save our initial samples.
     ckpt = {
         'x_post': jax.device_get(x_post), 'config': config.to_dict(),
-        'metrics': jax.device_get(initial_metrics)
+        'metrics': jax.device_get(initial_metrics),
+        'rand_obs': jax.device_get(rand_obs),
+        'post_state_params': jax.device_get(post_state_params)
     }
     save_args = orbax_utils.save_args_from_target(ckpt)
     checkpoint_manager.save(0, ckpt, save_kwargs={'save_args': save_args})
@@ -332,7 +340,13 @@ def main(_):
             jnp.stack(x_post, axis=0), 'K M N ... -> (K M N) ...'
         )
 
-        # Clamp to dataset limits
+        # Clamp to dataset limits.
+        x_filt, num_dropped = load_datasets.filter_samples_by_clamp_range(
+            x_post, config.data_max
+        )
+        # Only keep filter if there are enough samples left.
+        if num_dropped < 0.4 * x_post.shape[0]:
+            x_post = x_filt
         x_post = load_datasets.clamp_dataset(x_post, config.data_max)
 
         # Compute and save metrics with the state, ema, and samples.
@@ -344,7 +358,8 @@ def main(_):
             'state': jax.device_get(jax_utils.unreplicate(state_unet)),
             'x_post': jax.device_get(x_post),
             'ema_params': jax.device_get(ema.params),
-            'config': config.to_dict(), 'metrics': jax.device_get(lap_metrics)
+            'config': config.to_dict(), 'metrics': jax.device_get(lap_metrics),
+            'rand_obs': jax.device_get(rand_obs)
         }
         save_args = orbax_utils.save_args_from_target(ckpt)
         checkpoint_manager.save(

@@ -222,7 +222,7 @@ def main(_):
             x_post, config.data_max
         )
         # Only keep filter if there are enough samples left.
-        if num_dropped < 0.8 * x_post.shape[0]:
+        if num_dropped < 0.4 * x_post.shape[0]:
             x_post = x_filt
         x_post = load_datasets.clamp_dataset(x_post, config.data_max)
 
@@ -345,7 +345,7 @@ def main(_):
             x_post, config.data_max
         )
         # Only keep filter if there are enough samples left.
-        if num_dropped < 0.8 * x_post.shape[0]:
+        if num_dropped < 0.4 * x_post.shape[0]:
             x_post = x_filt
         x_post = load_datasets.clamp_dataset(x_post, config.data_max)
 

@@ -19,7 +19,7 @@ def clamp_dataset(dataset: jnp.ndarray, data_max: float) -> jnp.ndarray:
 
 
 def filter_samples_by_clamp_range(
-    samples, data_max, max_outlier_fraction=0.005
+    samples, data_max, max_outlier_fraction=0.0001
 ):
     """Filter samples where sufficient pixels are outside clamp range.
 
@@ -28,7 +28,8 @@ def filter_samples_by_clamp_range(
             samples, but otherwise the shape is arbitrary.
         data_max: Maximum absolute value for clamping
         max_outlier_fraction: Maximum fraction of pixels allowed to be outside
-            clamp range
+            clamp range. Default is 0.0001, which is 1 pixel for a 128x128
+            image.
 
     Returns:
         Filtered samples array and number of dropped samples

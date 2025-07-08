@@ -19,7 +19,7 @@ def clamp_dataset(dataset: jnp.ndarray, data_max: float) -> jnp.ndarray:
 
 
 def filter_samples_by_clamp_range(
-    samples, data_max, max_outlier_fraction=0.1
+    samples, data_max, max_outlier_fraction=0.005
 ):
     """Filter samples where sufficient pixels are outside clamp range.
 

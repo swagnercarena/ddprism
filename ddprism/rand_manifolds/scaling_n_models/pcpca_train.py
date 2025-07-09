@@ -21,7 +21,7 @@ from ddprism.pcpca import pcpca_utils
 from ddprism import plotting_utils
 
 import load_dataset
-import pcpca_utils
+from ddprism.pcpca import pcpca_utils
 
 FLAGS = flags.FLAGS
 flags.DEFINE_string('workdir', None, 'working directory.')

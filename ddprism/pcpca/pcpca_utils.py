@@ -1,5 +1,5 @@
 """Utility functions for PCPCA."""
-from typing import Dict
+from typing import Dict, Tuple
 
 import jax
 import jax.numpy as jnp
@@ -143,8 +143,32 @@ def compute_aux_matrix(
     return mat_prod
 
 
-# def impute_missing_data(params, X_obs, L, M, P, dim):
-#     A, B, C, F = compute_aux_matrices(params, L, M, P, dim)
-#     x_mean = (F @ jnp.linalg.inv(A) @ X_obs[..., None]).squeeze(axis=-1)
-#     x_cov = C - F @ jnp.linalg.inv(A) @ jnp.matrix_transpose(F)
-#     return x_mean, x_cov
+def calculate_posterior(
+    params: Dict[str, jnp.ndarray], y_obs: jnp.ndarray, a_mat: jnp.ndarray
+) -> Tuple[jnp.ndarray, jnp.ndarray]:
+    """Calculate the mean and covariance for the signal posterior.
+
+    Args:
+        params: Parameters of the PCPCA model. Dict with keys 'weights' and
+            'log_sigma'.
+        y_obs: Observed data with enriched signal.
+        a_mat: Transformation matrix for the observation.
+
+    Returns:
+        Tuple of mean and covariance for the signal posterior.
+
+    Notes:
+        See paper for derivation.
+    """
+    weights, log_sigma = params['weights'], params['log_sigma']
+    sigma = jnp.exp(log_sigma)
+
+    # Add a small regularization term to the covariance matrix to avoid
+    # numerical instability.
+    sigma_post = jnp.linalg.inv(
+        jnp.linalg.inv(weights @ weights.T + jnp.eye(weights.shape[0]) * 1e-6) +
+        (1/sigma ** 2) * a_mat.T @ a_mat
+    )
+    mean_post = (1/sigma ** 2) * sigma_post @ a_mat.T @ y_obs
+
+    return mean_post, sigma_post

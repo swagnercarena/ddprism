@@ -131,5 +131,52 @@ class PCPCAUtilsTests(chex.TestCase):
             grads['log_sigma'], auto_grads['log_sigma'], places=5
         )
 
+    @chex.all_variants
+    def test_calculate_posterior(self):
+        """Test that calculate_posterior returns valid results."""
+        rng = jax.random.PRNGKey(0)
+        obs_features = 5
+        signal_features = 4
+        latent_dim = 3
+
+        rng_keys = jax.random.split(rng, 4)
+
+        # Create parameters, observations, and transformation matrix
+        weights = jax.random.normal(rng_keys[0], (signal_features, latent_dim))
+        log_sigma = jax.random.normal(rng_keys[1], ())
+        params = {'weights': weights, 'log_sigma': log_sigma}
+        y_obs = jax.random.normal(rng_keys[2], (obs_features,))
+        a_mat = jax.random.normal(rng_keys[3], (obs_features, signal_features))
+
+        apply_func = self.variant(pcpca_utils.calculate_posterior)
+        mean_post, sigma_post = apply_func(params, y_obs, a_mat)
+
+        # Check shapes and basic properties.
+        self.assertTupleEqual(mean_post.shape, (signal_features,))
+        self.assertTupleEqual(
+            sigma_post.shape, (signal_features, signal_features)
+        )
+        self.assertTrue(jnp.allclose(sigma_post, sigma_post.T))
+        self.assertTrue(jnp.linalg.det(sigma_post) > 0)
+
+        # Check the edge case when the transformation matrix is zero.
+        a_mat = jnp.zeros((obs_features, signal_features))
+        mean_post, sigma_post = apply_func(params, y_obs, a_mat)
+        self.assertTrue(jnp.allclose(mean_post, jnp.zeros((signal_features,))))
+        self.assertTrue(jnp.allclose(sigma_post, weights @ weights.T))
+
+        # Check the edge case when the transformation matrix is the identity and
+        # the noise is zero.
+        a_mat = jnp.eye(obs_features)
+        params['log_sigma'] = -100
+        params['weights'] = jax.random.normal(
+            rng_keys[0], (obs_features, latent_dim)
+        )
+        mean_post, sigma_post = apply_func(params, y_obs, a_mat)
+        self.assertTrue(jnp.allclose(mean_post, y_obs))
+        self.assertTrue(
+            jnp.allclose(sigma_post, jnp.zeros((obs_features, obs_features)))
+        )
+
 if __name__ == '__main__':
     absltest.main()

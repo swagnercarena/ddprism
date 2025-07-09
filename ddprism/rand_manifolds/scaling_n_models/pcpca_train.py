@@ -17,8 +17,10 @@ from ddprism import linalg
 from ddprism import training_utils
 from ddprism import utils
 from ddprism.rand_manifolds import random_manifolds
+from ddprism.pcpca import pcpca_utils
 from ddprism import plotting_utils
 
+import load_dataset
 import pcpca_utils
 
 FLAGS = flags.FLAGS
@@ -27,18 +29,17 @@ config_flags.DEFINE_config_file(
     'config', None, 'File path to the training configuration.',
 )
 
-wandb.login()
 
 def main(_):
     """Train a joint posterior denoiser."""
     config = FLAGS.config
     rng = jax.random.PRNGKey(config.rng_key)
 
-    #workdir = FLAGS.workdir
-    #os.makedirs(workdir, exist_ok=True)
+    workdir = FLAGS.workdir
+    os.makedirs(workdir, exist_ok=True)
 
     print(f'Found devices {jax.devices()}')
-    #print(f'Working directory: {workdir}')
+    print(f'Working directory: {workdir}')
 
     # Set up wandb logging and checkpointing.
     wandb.init(
@@ -50,59 +51,73 @@ def main(_):
 
     # Generate our dataset.
     rng, rng_data = jax.random.split(rng)
-    x_all, A_all, y_all, cov_y_all = pcpca_utils.get_dataset(rng_data, config)
+    x_all, A_all, y_all, _ = load_dataset.get_dataset(rng_data, config)
 
-
+    # Allow for different gammas for each source.
     if isinstance(config.gamma, list):
         assert len(config.gamma) == config.n_sources
         gamma_list = config.gamma
     else:
         gamma_list = [config.gamma for i in range(config.n_sources)]
 
-
+    # Do each PCPCA / PPCA analysis.
     for source_index in range(config.n_sources):
-        # Reformulate the problem in the terms used in PCPCA.
+        # Get the gamma and relevant observations.
         gamma = gamma_list[source_index]
+
+        # In PCPCA language, x_obs is enriched signal and y_obs is background.
         x_obs = y_all[:, source_index]
-        # Center data around zero mean
-        x_mean = x_obs[:, 0].mean(axis=0)
-        x_obs = x_obs - x_mean
 
         if source_index == 0:
             y_obs = jnp.zeros_like(x_obs)
         else:
-            y_obs = y_all[:,source_index-1]
+            y_obs = y_all[:, source_index-1]
 
-        L = A_all[:,source_index]
+        x_a_mat = A_all[:,source_index]
         if source_index == 0:
-            M = jnp.zeros_like(L)
+            y_a_mat = jnp.zeros_like(x_a_mat)
         else:
-            M = A_all[:,source_index-1]
-        P = jnp.repeat(jnp.eye(5, 5)[None, ...], x_all[:, 0].shape[0], axis=0)
+            y_a_mat = A_all[:,source_index-1]
 
-        # Initialize W and sigma2.
-        rng, _ = jax.random.split(rng, 2)
-        W_init = (jax.random.uniform(rng, shape=(config.feat_dim, config.latent_dim)) - 0.5)
-        sigma2_init = 0.3
-        params = (jnp.asarray(W_init), jnp.asarray(sigma2_init))
+        # Initialize W and log_sigma.
+        rng_w, rng = jax.random.split(rng, 2)
+        weights_init = jax.random.uniform(
+            rng_w, shape=(config.feat_dim, config.latent_dim), minval=-1.0,
+            maxval=1.0
+        )
+        log_sigma_init = jnp.log(config.sigma_y)
+        params = {
+            'weights': jnp.asarray(weights_init), 'log_sigma': log_sigma_init
+        }
 
         # Optimization loop parameters.
         if config.lr_schedule == 'linear':
-            schedule = optax.schedules.linear_schedule(config.learning_rate, 1e-6, config.n_iter,)
+            schedule = optax.schedules.linear_schedule(
+                config.learning_rate, 1e-6, config.n_iter
+            )
         elif config.lr_schedule == 'cosine':
-            schedule = optax.schedules.cosine_decay_schedule(init_value=config.learning_rate, decay_steps=config.n_iter)
-        solver = optax.inject_hyperparams(optax.sgd, static_args=['learning_rate'])(learning_rate=schedule)
-
-        opt_state = solver.init(params)
+            schedule = optax.schedules.cosine_decay_schedule(
+                init_value=config.learning_rate, decay_steps=config.n_iter
+            )
+        else:
+            raise ValueError(
+                f'Unknown learning rate schedule: {config.lr_schedule}'
+            )
 
         # Run the optimization loop.
-        for _ in range(config.n_iter):
-            grad = jax.grad(pcpca_utils.f, argnums=0, allow_int=True)(params, x_obs, y_obs, L, M, P, gamma, config.feat_dim)
-            updates, opt_state = solver.update(grad, opt_state, params)
-            params = optax.apply_updates(params, updates)
-            if (_ + 1) % 100 == 0:
-                loss = pcpca_utils.f(params, x_obs, y_obs, L, M, P, gamma, config.feat_dim)
-                wandb.log({f'loss {source_index + 1}': loss}, step=(_ + 1))
+        for iter in range(config.n_iter):
+            grad = pcpca_utils.loss_grad(
+                params, x_obs, y_obs, x_a_mat, y_a_mat, gamma
+            )
+            loss = pcpca_utils.loss(
+                params, x_obs, y_obs, x_a_mat, y_a_mat, gamma
+            )
+            params['weights'] -= schedule(iter) * grad['weights']
+
+            # Log our loss
+            wandb.log({f'loss {source_index + 1}': loss}, step=iter)
+
+        ### CODE BELOW IS FOR FUTURE VERIFICATION.
 
         # Estimate mean of and uncertainty on missing values.
         x_u_mean, x_u_cov = pcpca_utils.impute_missing_data(params, x_obs, L, M, P, config.feat_dim)

@@ -1,5 +1,6 @@
 "Train a diffusion model with variable mixing matrix and n_models."
 import os
+import functools
 
 from absl import app, flags
 from flax.training import orbax_utils, train_state

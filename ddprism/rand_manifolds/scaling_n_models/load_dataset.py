@@ -26,14 +26,15 @@ def get_dataset(rng, config):
         assert len(config.phase) == config.n_sources
         phase = config.phase
     else:
-        phase = [config.phase for i in range(config.n_sources)]
+        phase = [config.phase for _ in range(config.n_sources)]
 
-    for _ in range(config.n_sources):
+    for i in range(config.n_sources):
         rng_x, rng = jax.random.split(rng_x, 2)
         x_all.append(
             random_manifolds.generate_x(
                 rng_x, config.sample_size, man_dim=1,
-                feat_dim=config.feat_dim, alpha=alpha[_], phase=phase[_], normalize=True
+                feat_dim=config.feat_dim, alpha=alpha[i], phase=phase[i],
+                normalize=True
             )
         )
     x_all = jnp.stack(x_all, axis=1)

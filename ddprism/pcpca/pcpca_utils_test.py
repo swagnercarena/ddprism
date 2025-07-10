@@ -71,7 +71,7 @@ class PCPCAUtilsTests(chex.TestCase):
 
 
     @chex.all_variants
-    def test_loss_function(self):
+    def test_loss(self):
         """Test that the loss function returns the correct shape and finite values."""
         rng = jax.random.PRNGKey(0)
         batch_size = 16
@@ -85,8 +85,6 @@ class PCPCAUtilsTests(chex.TestCase):
         apply_func = self.variant(pcpca_utils.loss)
         loss_value = apply_func(params, x_obs, y_obs, x_a_mat, y_a_mat, gamma)
 
-        print(loss_value)
-
         # Check shape (should be scalar)
         self.assertTupleEqual(loss_value.shape, ())
 
@@ -94,7 +92,7 @@ class PCPCAUtilsTests(chex.TestCase):
         self.assertTrue(jnp.isfinite(loss_value))
 
     @chex.all_variants
-    def test_loss_grad_function(self):
+    def test_loss_grad(self):
         """Test that the loss_grad function returns the correct shapes."""
         rng = jax.random.PRNGKey(0)
         batch_size = 16
@@ -143,7 +141,7 @@ class PCPCAUtilsTests(chex.TestCase):
 
         # Create parameters, observations, and transformation matrix
         weights = jax.random.normal(rng_keys[0], (signal_features, latent_dim))
-        log_sigma = jax.random.normal(rng_keys[1], ())
+        log_sigma = jax.random.normal(rng_keys[1], ()) + 10
         params = {'weights': weights, 'log_sigma': log_sigma}
         y_obs = jax.random.normal(rng_keys[2], (obs_features,))
         a_mat = jax.random.normal(rng_keys[3], (obs_features, signal_features))

@@ -2,26 +2,23 @@
 import os
 
 from absl import app, flags
-from flax.training import orbax_utils, train_state
 import jax
 import jax.numpy as jnp
 from ml_collections import config_flags
-import numpy as np
-from orbax.checkpoint import CheckpointManager, PyTreeCheckpointer
+from orbax.checkpoint import CheckpointManager, CheckpointManagerOptions
+from orbax.checkpoint import PyTreeCheckpointer
 import optax
 from tqdm import tqdm
 import wandb
 
-from ddprism import diffusion
-from ddprism import linalg
-from ddprism import training_utils
 from ddprism import utils
-from ddprism.rand_manifolds import random_manifolds
 from ddprism.pcpca import pcpca_utils
 from ddprism import plotting_utils
 
 import load_dataset
 from ddprism.pcpca import pcpca_utils
+
+jax.config.update("jax_enable_x64", True)
 
 FLAGS = flags.FLAGS
 flags.DEFINE_string('workdir', None, 'working directory.')
@@ -49,6 +46,16 @@ def main(_):
         mode=config.wandb_kwargs.get('mode', 'disabled')
     )
 
+    # Set up checkpointing.
+    checkpointer = PyTreeCheckpointer()
+    checkpoint_options = CheckpointManagerOptions(
+        enable_async_checkpointing=False
+    )
+    checkpoint_manager = CheckpointManager(
+        os.path.join(workdir, 'checkpoints'), checkpointer,
+        options=checkpoint_options
+    )
+
     # Generate our dataset.
     rng, rng_data = jax.random.split(rng)
     x_all, A_all, y_all, _ = load_dataset.get_dataset(rng_data, config)
@@ -58,7 +65,10 @@ def main(_):
         assert len(config.gamma) == config.n_sources
         gamma_list = config.gamma
     else:
-        gamma_list = [config.gamma for i in range(config.n_sources)]
+        gamma_list = [0] + [config.gamma for _ in range(1, config.n_sources)]
+
+    # Set regularization parameter for numerical stability.
+    regularization = getattr(config, 'regularization', 1e-6)
 
     # Do each PCPCA / PPCA analysis.
     for source_index in range(config.n_sources):
@@ -79,12 +89,17 @@ def main(_):
         else:
             bkg_a_mat = A_all[:,source_index-1]
 
-        # Initialize W and log_sigma.
+        # Initialize W and log_sigma using PCA of the pseudo-inverse of the
+        # observation matrix.
         rng_w, rng = jax.random.split(rng, 2)
-        weights_init = jax.random.uniform(
-            rng_w, shape=(config.feat_dim, config.latent_dim), minval=-1.0,
-            maxval=1.0
+        x_pinv = jnp.squeeze(jnp.linalg.pinv(enr_a_mat) @ y_enr[:, :, None])
+        cov_empirical = jnp.cov(x_pinv, rowvar=False)
+        u_mat, s_mat, _ = jnp.linalg.svd(cov_empirical)
+        weights_init = u_mat[:, :config.latent_dim] * jnp.sqrt(s_mat[:config.latent_dim])
+        weights_init += 0.01 * jax.random.normal(
+            rng_w, shape=(config.feat_dim, config.latent_dim)
         )
+
         log_sigma_init = jnp.log(config.sigma_y)
         params = {
             'weights': jnp.asarray(weights_init), 'log_sigma': log_sigma_init
@@ -104,26 +119,42 @@ def main(_):
                 f'Unknown learning rate schedule: {config.lr_schedule}'
             )
 
-        # Run the optimization loop.
-        for step in range(config.n_iter):
-            grad = pcpca_utils.loss_grad(
-                params, y_enr, y_bkg, enr_a_mat, bkg_a_mat, gamma
-            )
-            loss = pcpca_utils.loss(
-                params, y_enr, y_bkg, enr_a_mat, bkg_a_mat, gamma
-            )
-            params['weights'] -= schedule(step) * grad['weights']
+        # Initialize Adam optimizer
+        optimizer = optax.adam(learning_rate=schedule)
+        opt_state = optimizer.init(params)
 
-            # Log our loss
+        # Run the optimization loop.
+        pbar = tqdm(range(config.n_iter), desc=f'Source {source_index + 1}')
+        for step in pbar:
+            grad = jax.jit(pcpca_utils.loss_grad)(
+                params, y_enr, y_bkg, enr_a_mat, bkg_a_mat, gamma,
+                regularization
+            )
+            loss = jax.jit(pcpca_utils.loss)(
+                params, y_enr, y_bkg, enr_a_mat, bkg_a_mat, gamma,
+                regularization
+            )
+
+                        # Update parameters
+            updates, opt_state = optimizer.update(grad, opt_state, params)
+            updated_params = optax.apply_updates(params, updates)
+            # Fix log_sigma after update (create new dict to avoid mutability issues)
+            params = {
+                'weights': updated_params['weights'],
+                'log_sigma': jnp.log(config.sigma_y)
+            }
+
+            # Log our loss.
             wandb.log({f'loss {source_index + 1}': loss}, step=step)
+            pbar.set_postfix({'loss': f'{loss:.6f}'})
 
         # Get the posterior for the signal underlying the observation.
         x_mean, x_cov = jax.vmap(
-            pcpca_utils.calculate_posterior, in_axes=(None, 0, 0, 0)
-        )(params, y_enr, enr_a_mat)
+            pcpca_utils.calculate_posterior, in_axes=(None, 0, 0, None)
+        )(params, y_enr, enr_a_mat, regularization)
 
         # Draw samples from the posterior.
-        rng_x, rng = jax.random.split(rng, 3)
+        rng_x, rng = jax.random.split(rng, 2)
         x_post_draws = jax.random.multivariate_normal(
             rng_x, mean=x_mean, cov=x_cov
         )
@@ -139,7 +170,7 @@ def main(_):
 
         # Log a figure with new posterior samples.
         if config.log_figure:
-            fig = plotting_utils.show_corner(x_post_draws)._figure
+            fig = plotting_utils.show_corner(x_post_draws)
             wandb.log(
                     {f'posterior samples {source_index+1}': wandb.Image(fig)},
                     step=config.n_iter
@@ -149,7 +180,9 @@ def main(_):
         z_draws = jax.random.normal(
             rng_x, shape=(config.sample_size, config.latent_dim)
         )
-        x_prior_draws = jnp.matmul(params['weights'], z_draws[:, :, None])
+        x_prior_draws = jnp.squeeze(
+            jnp.matmul(params['weights'], z_draws[:, :, None])
+        )
         divergence_x_prior_draws = utils.sinkhorn_divergence(
             x_prior_draws[:config.sinkhorn_samples],
             x_all[:config.sinkhorn_samples, source_index]
@@ -160,11 +193,14 @@ def main(_):
         )
 
         if config.log_figure:
-            fig = plotting_utils.show_corner(x_prior_draws)._figure
+            fig = plotting_utils.show_corner(x_prior_draws)
             wandb.log(
                     {f'prior samples {source_index+1}': wandb.Image(fig)},
                     step=config.n_iter
                 )
+
+        # Save the parameters.
+        checkpoint_manager.save(source_index, params)
 
 if __name__ == '__main__':
     app.run(main)

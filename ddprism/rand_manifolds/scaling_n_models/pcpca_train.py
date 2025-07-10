@@ -135,14 +135,10 @@ def main(_):
                 regularization
             )
 
-                        # Update parameters
+            # Update parameters
             updates, opt_state = optimizer.update(grad, opt_state, params)
-            updated_params = optax.apply_updates(params, updates)
-            # Fix log_sigma after update (create new dict to avoid mutability issues)
-            params = {
-                'weights': updated_params['weights'],
-                'log_sigma': jnp.log(config.sigma_y)
-            }
+            params = optax.apply_updates(params, updates)
+            params['log_sigma'] = jnp.log(config.sigma_y) # Fix log_sigma.
 
             # Log our loss.
             wandb.log({f'loss {source_index + 1}': loss}, step=step)
@@ -170,7 +166,7 @@ def main(_):
 
         # Log a figure with new posterior samples.
         if config.log_figure:
-            fig = plotting_utils.show_corner(x_post_draws)
+            fig = plotting_utils.show_corner(x_post_draws)._figure
             wandb.log(
                     {f'posterior samples {source_index+1}': wandb.Image(fig)},
                     step=config.n_iter
@@ -193,7 +189,7 @@ def main(_):
         )
 
         if config.log_figure:
-            fig = plotting_utils.show_corner(x_prior_draws)
+            fig = plotting_utils.show_corner(x_prior_draws)._figure
             wandb.log(
                     {f'prior samples {source_index+1}': wandb.Image(fig)},
                     step=config.n_iter

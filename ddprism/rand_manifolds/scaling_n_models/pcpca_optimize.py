@@ -41,49 +41,47 @@ def objective(trial, config):
     rng = jax.random.PRNGKey(config.rng_key)
     rng, rng_data = jax.random.split(rng)
     x_all, A_all, y_all, _ = load_dataset.get_dataset(rng_data, config)
-    
+
     # Set regularization parameter for numerical stability.
     regularization = getattr(config, 'regularization', 1e-6)
-    
+
     # We are optimizing for the reconstruction of the second source
     source_index = 1
-    
+
     # In PCPCA language, y_enr is enriched observation and y_bkg is background.
     y_enr = y_all[:, source_index]
     y_bkg = y_all[:, source_index-1]
-    
+
     enr_a_mat = A_all[:,source_index]
     bkg_a_mat = A_all[:,source_index-1]
-    
-    # Initialize W and log_sigma using PCA of the pseudo-inverse of the
-    # observation matrix.
+
+    # Initialize W using PCA of the pseudo-inverse of the observation matrix.
     rng_w, rng = jax.random.split(rng, 2)
     x_pinv = jnp.squeeze(jnp.linalg.pinv(enr_a_mat) @ y_enr[:, :, None])
     cov_empirical = jnp.cov(x_pinv, rowvar=False)
     u_mat, s_mat, _ = jnp.linalg.svd(cov_empirical)
-    
     log_sigma_init = jnp.log(config.sigma_y)
 
     # Initialize weight matrix
     weights_init = u_mat[:, :latent_dim] * jnp.sqrt(s_mat[:latent_dim])
     weights_init += 0.01 * jax.random.normal(
-    rng_w, shape=(config.feat_dim, latent_dim)
-        )
+        rng_w, shape=(config.feat_dim, latent_dim)
+    )
     params = {'weights': jnp.asarray(weights_init), 'log_sigma': log_sigma_init}
 
     # Optimization loop parameters.
     if lr_schedule == 'linear':
         schedule = optax.schedules.linear_schedule(
-                learning_rate, 1e-6, n_iter
-            )
+            learning_rate, 1e-6, n_iter
+        )
     elif lr_schedule == 'cosine':
         schedule = optax.schedules.cosine_decay_schedule(
-                init_value=learning_rate, decay_steps=n_iter
-            )
+            init_value=learning_rate, decay_steps=n_iter
+        )
     else:
         raise ValueError(
-                f'Unknown learning rate schedule: {lr_schedule}'
-            )
+            f'Unknown learning rate schedule: {lr_schedule}'
+        )
 
     # Initialize Adam optimizer
     optimizer = optax.adam(learning_rate=schedule)
@@ -111,32 +109,27 @@ def objective(trial, config):
 
     # Get the posterior for the signal underlying the observation.
     x_mean, x_cov = jax.vmap(
-            pcpca_utils.calculate_posterior, in_axes=(None, 0, 0, None)
-        )(params, y_enr, enr_a_mat, regularization)
+        pcpca_utils.calculate_posterior, in_axes=(None, 0, 0, None)
+    )(params, y_enr, enr_a_mat, regularization)
 
     # Draw samples from the posterior.
     rng_x, rng = jax.random.split(rng, 2)
     x_post_draws = jax.random.multivariate_normal(
-            rng_x, mean=x_mean, cov=x_cov
-        )
+        rng_x, mean=x_mean, cov=x_cov
+    )
 
-    # Get the posterior for the signal underlying the observation.
-    y_mean, y_cov = jax.vmap(
-            pcpca_utils.calculate_posterior, in_axes=(None, 0, 0, None)
-        )(params, y_bkg, bkg_a_mat, regularization)
-    
     divergence_x_draws = utils.sinkhorn_divergence(
-            x_post_draws[:config.sinkhorn_samples] - y_mean,
+            x_post_draws[:config.sinkhorn_samples],
             x_all[:config.sinkhorn_samples, source_index]
         )
-    
+
     pcpca_params_dict = {}
     pcpca_params_dict['log_sigma'] = float(params['log_sigma'])
     pcpca_params_dict['weights'] = params['weights'].tolist()
-    
-    trial.set_user_attr("pcpca_params", pcpca_params_dict)       
+
+    trial.set_user_attr("pcpca_params", pcpca_params_dict)
     return divergence_x_draws
-    
+
 def main(_):
     """Optimize over PCPCA parameters to find the parameters for reconstructing x_2 distribution."""
     config = FLAGS.config
@@ -168,21 +161,21 @@ def main(_):
     study = optuna.create_study(study_name=study_name, storage=storage_name, direction="minimize")
 
     study.optimize(objective_fn, n_trials=config.n_trials, timeout=None)
-    
+
     pruned_trials = study.get_trials(deepcopy=False, states=[TrialState.PRUNED])
     complete_trials = study.get_trials(deepcopy=False, states=[TrialState.COMPLETE])
-    
+
     print("Study statistics: ")
     print("  Number of finished trials: ", len(study.trials))
     print("  Number of pruned trials: ", len(pruned_trials))
     print("  Number of complete trials: ", len(complete_trials))
 
-    
+
     print("Best trial:")
     best_trial = study.best_trial
-    
+
     print("  Value: ", best_trial.value)
-    
+
     print("  Params: ")
     for key, value in best_trial.params.items():
         print("    {}: {}".format(key, value))
@@ -194,24 +187,24 @@ def main(_):
     losses = jnp.zeros(len(study.trials))
     for i, t in enumerate(study.trials):
         losses = losses.at[i].set(t.values[0])
-        
+
     sorted_losses = jnp.sort(losses)
-    
+
     idxs = jnp.argsort(losses)
     for trial_number in idxs[:10]:
         trial = study.trials[trial_number]
-        
+
         for key, value in trial.params.items():
             print("    {}: {}".format(key, value))
-            
-    
+
+
         print("  Inferred Params for PCPCA: ")
         print("    log_sigma: ", trial.user_attrs['pcpca_params']['log_sigma'])
         print("    weights: \n", trial.user_attrs['pcpca_params']['weights'])
-        
+
 
         # Save the parameters.
         #checkpoint_manager.save(i, {'best_trial': best_trial, 'trials': study.trials})
-        
+
 if __name__ == '__main__':
     app.run(main)

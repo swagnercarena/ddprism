@@ -1,10 +1,12 @@
 """Configuration file for optimizing over PCPCA hyperparameters for the contrastive problem. """
 import config_base
+import config_base_pcpca
 from ml_collections import ConfigDict
 
 def get_config():
     """Get the default hyperparameter configuration."""
-    config = config_base.get_config()
+    config = ConfigDict()
+    config.pcpca_config = config_base_pcpca.get_config()
 
     # Parameters for PCPCA 
     config.n_trials = 100
@@ -23,5 +25,13 @@ def get_config():
 
     config.lr_min = 1e-4
     config.lr_max = 5e-2
+
+    # wandb parameters
+    config.wandb_kwargs = ConfigDict(
+        {'project': 'optuna_test', 'mode': 'online',
+         'run_name': None
+        }
+    )
+    config.log_figure = True
 
     return config

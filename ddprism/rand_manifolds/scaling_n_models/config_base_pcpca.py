@@ -7,7 +7,7 @@ def get_config():
     config = config_base.get_config()
 
     # Parameters for PCPCA
-    config.gamma = [0., 0.3, 0.3]
+    config.gamma = 0.3
     config.latent_dim = 5
 
     # Optimization hyperparameters

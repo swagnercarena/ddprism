@@ -263,3 +263,21 @@ def sinkhorn_divergence(
         divergence = jnp.maximum(divergence, 0.0)
 
     return divergence
+
+
+def psnr(u: Array, v: Array, max_val: float=1, mean: bool=False) -> Array:
+    r"""Computes peak signal-to-noise ratio (PSNR) between the true signal u and the predicted signal v.
+
+    Arguments:
+        u: True signal.
+        v: Predicted signal. 
+        max_val: maximum possible value of the true signal.
+            
+    Returns:
+        psnr: peak signal to noise ratio of u and v.  The returned array has shape (*, ).
+    """
+    mse = jnp.mean((u - v)**2, axis=-1)
+    psnr = 20*jnp.log10(max_val / jnp.sqrt(mse))
+    if mean: 
+        psnr = psnr.mean()
+    return psnr

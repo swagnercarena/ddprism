@@ -109,14 +109,14 @@ def objective(trial, config):
         # Log our loss.
         pbar.set_postfix({'loss': f'{loss:.6f}'})
 
-        # Get the posterior for the signal underlying the observation.
-        x_mean, x_cov = jax.vmap(
+    # Get the posterior for the signal underlying the observation.
+    x_mean, x_cov = jax.vmap(
             pcpca_utils.calculate_posterior, in_axes=(None, 0, 0, None)
         )(params, y_enr, enr_a_mat, regularization)
 
-        # Draw samples from the posterior.
-        rng_x, rng = jax.random.split(rng, 2)
-        x_post_draws = jax.random.multivariate_normal(
+    # Draw samples from the posterior.
+    rng_x, rng = jax.random.split(rng, 2)
+    x_post_draws = jax.random.multivariate_normal(
             rng_x, mean=x_mean, cov=x_cov
         )
 
@@ -124,8 +124,11 @@ def objective(trial, config):
             x_post_draws[:config.sinkhorn_samples],
             x_all[:config.sinkhorn_samples, source_index]
         )
+    pcpca_params_dict = {}
+    pcpca_params_dict['log_sigma'] = float(params['log_sigma'])
+    pcpca_params_dict['weights'] = params['weights'].tolist()
     
-    trial.set_user_attr("params", params)       
+    trial.set_user_attr("pcpca_params", pcpca_params_dict)       
     return divergence_x_draws
     
 def main(_):
@@ -140,6 +143,7 @@ def main(_):
     print(f'Working directory: {workdir}')
 
     # Set up checkpointing.
+    '''
     checkpointer = PyTreeCheckpointer()
     checkpoint_options = CheckpointManagerOptions(
         enable_async_checkpointing=False
@@ -148,10 +152,15 @@ def main(_):
         os.path.join(workdir, 'checkpoints'), checkpointer,
         options=checkpoint_options
     )
+    '''
 
     objective_fn = objective
     objective_fn = partial(objective_fn, config=config)
-    study = optuna.create_study(direction="minimize")
+
+    study_name = "pcpca-study"  # Unique identifier of the study.
+    storage_name = f"sqlite:///{workdir}/{study_name}.db"
+    study = optuna.create_study(study_name=study_name, storage=storage_name, direction="minimize")
+
     study.optimize(objective_fn, n_trials=config.n_trials, timeout=None)
     
     pruned_trials = study.get_trials(deepcopy=False, states=[TrialState.PRUNED])
@@ -172,8 +181,8 @@ def main(_):
     for key, value in best_trial.params.items():
         print("    {}: {}".format(key, value))
     print("  Inferred Params for PCPCA: ")
-    print("    log_sigma: ", best_trial.user_attrs['params']['log_sigma'])
-    print("    weights: ", best_trial.user_attrs['params']['weights'])
+    print("    log_sigma: ", best_trial.user_attrs['pcpca_params']['log_sigma'])
+    print("    weights: \n", best_trial.user_attrs['pcpca_params']['weights'])
 
 
     losses = jnp.zeros(len(study.trials))
@@ -182,21 +191,21 @@ def main(_):
         
     sorted_losses = jnp.sort(losses)
     
-    indexes = jnp.argsort(losses)
-    for trial_number in indexes[:10]:
+    idxs = jnp.argsort(losses)
+    for trial_number in idxs[:10]:
         trial = study.trials[trial_number]
-        print(f'Trial {trial_number}: {trial.values[0]:.3f}')
-    
+        
         for key, value in trial.params.items():
             print("    {}: {}".format(key, value))
+            
     
         print("  Inferred Params for PCPCA: ")
-        print("    log_sigma: ", trial.user_attrs['params']['log_sigma'])
-        print("    weights: \n", trial.user_attrs['params']['weights'])
-            
+        print("    log_sigma: ", trial.user_attrs['pcpca_params']['log_sigma'])
+        print("    weights: \n", trial.user_attrs['pcpca_params']['weights'])
+        
 
-    # Save the parameters.
-    checkpoint_manager.save(source_index, {'best_trial': best_trial, 'trials': study.trials})
-    
+        # Save the parameters.
+        #checkpoint_manager.save(i, {'best_trial': best_trial, 'trials': study.trials})
+        
 if __name__ == '__main__':
     app.run(main)

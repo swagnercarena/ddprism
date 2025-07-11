@@ -120,10 +120,16 @@ def objective(trial, config):
             rng_x, mean=x_mean, cov=x_cov
         )
 
+    # Get the posterior for the signal underlying the observation.
+    y_mean, y_cov = jax.vmap(
+            pcpca_utils.calculate_posterior, in_axes=(None, 0, 0, None)
+        )(params, y_bkg, bkg_a_mat, regularization)
+    
     divergence_x_draws = utils.sinkhorn_divergence(
-            x_post_draws[:config.sinkhorn_samples],
+            x_post_draws[:config.sinkhorn_samples] - y_mean,
             x_all[:config.sinkhorn_samples, source_index]
         )
+    
     pcpca_params_dict = {}
     pcpca_params_dict['log_sigma'] = float(params['log_sigma'])
     pcpca_params_dict['weights'] = params['weights'].tolist()

@@ -9,14 +9,11 @@ from orbax.checkpoint import CheckpointManager, CheckpointManagerOptions
 from orbax.checkpoint import PyTreeCheckpointer
 import optax
 from tqdm import tqdm
-import wandb
 
 from ddprism import utils
 from ddprism.pcpca import pcpca_utils
-from ddprism import plotting_utils
 
 import load_dataset
-from ddprism.pcpca import pcpca_utils
 import optuna
 from optuna.trial import TrialState
 from functools import partial
@@ -32,12 +29,12 @@ config_flags.DEFINE_config_file(
 def objective(trial, config):
     # Run the PCPCA algorithm
     # Parameters for PCPCA
-    gamma = trial.suggest_float('gamma', 1e-2, 1.)
-    latent_dim = trial.suggest_int("latent_dim", 1, 5)
+    gamma = trial.suggest_float('gamma', config.gamma_min, config.gamma_max)
+    latent_dim = trial.suggest_int("latent_dim", config.latent_dim_min, config.latent_dim_max)
 
     # Optimization hyperparameters
-    n_iter = trial.suggest_int("n_iter", 10, 300, step=10)
-    learning_rate = trial.suggest_float("lr", 1e-4, 5e-2, log=True)
+    n_iter = trial.suggest_int("n_iter", config.n_iter_min, config.n_iter_max, step=config.n_iter_step)
+    learning_rate = trial.suggest_float("lr", config.lr_min, config.lr_max, log=True)
     lr_schedule = trial.suggest_categorical("optimizer", ["linear", "cosine"])
 
     # Generate our dataset.
@@ -66,12 +63,11 @@ def objective(trial, config):
     u_mat, s_mat, _ = jnp.linalg.svd(cov_empirical)
     
     log_sigma_init = jnp.log(config.sigma_y)
-    feat_dim = config.feat_dim
 
     # Initialize weight matrix
     weights_init = u_mat[:, :latent_dim] * jnp.sqrt(s_mat[:latent_dim])
     weights_init += 0.01 * jax.random.normal(
-    rng_w, shape=(feat_dim, latent_dim)
+    rng_w, shape=(config.feat_dim, latent_dim)
         )
     params = {'weights': jnp.asarray(weights_init), 'log_sigma': log_sigma_init}
 
@@ -128,11 +124,12 @@ def objective(trial, config):
             x_post_draws[:config.sinkhorn_samples],
             x_all[:config.sinkhorn_samples, source_index]
         )
-        
+    
+    trial.set_user_attr("params", params)       
     return divergence_x_draws
     
 def main(_):
-    """Train a joint posterior denoiser."""
+    """Optimize over PCPCA parameters to find the parameters for reconstructing x_2 distribution."""
     config = FLAGS.config
     rng = jax.random.PRNGKey(config.rng_key)
 
@@ -141,10 +138,21 @@ def main(_):
 
     print(f'Found devices {jax.devices()}')
     print(f'Working directory: {workdir}')
-    
-    objective = partial(objective, config=config)
+
+    # Set up checkpointing.
+    checkpointer = PyTreeCheckpointer()
+    checkpoint_options = CheckpointManagerOptions(
+        enable_async_checkpointing=False
+    )
+    checkpoint_manager = CheckpointManager(
+        os.path.join(workdir, 'checkpoints'), checkpointer,
+        options=checkpoint_options
+    )
+
+    objective_fn = objective
+    objective_fn = partial(objective_fn, config=config)
     study = optuna.create_study(direction="minimize")
-    study.optimize(objective, n_trials=config.n_trials, timeout=None)
+    study.optimize(objective_fn, n_trials=config.n_trials, timeout=None)
     
     pruned_trials = study.get_trials(deepcopy=False, states=[TrialState.PRUNED])
     complete_trials = study.get_trials(deepcopy=False, states=[TrialState.COMPLETE])
@@ -156,29 +164,39 @@ def main(_):
 
     
     print("Best trial:")
-    trial = study.best_trial
+    best_trial = study.best_trial
     
-    print("  Value: ", trial.value)
+    print("  Value: ", best_trial.value)
     
     print("  Params: ")
-    for key, value in trial.params.items():
+    for key, value in best_trial.params.items():
         print("    {}: {}".format(key, value))
+    print("  Inferred Params for PCPCA: ")
+    print("    log_sigma: ", best_trial.user_attrs['params']['log_sigma'])
+    print("    weights: ", best_trial.user_attrs['params']['weights'])
 
-    # Print results and parameters of 10 best trials
+
     losses = jnp.zeros(len(study.trials))
     for i, t in enumerate(study.trials):
         losses = losses.at[i].set(t.values[0])
         
-    sorted_losses = np.sort(losses)
+    sorted_losses = jnp.sort(losses)
     
-    indexes = np.argsort(losses)
+    indexes = jnp.argsort(losses)
     for trial_number in indexes[:10]:
         trial = study.trials[trial_number]
         print(f'Trial {trial_number}: {trial.values[0]:.3f}')
     
         for key, value in trial.params.items():
             print("    {}: {}".format(key, value))
+    
+        print("  Inferred Params for PCPCA: ")
+        print("    log_sigma: ", trial.user_attrs['params']['log_sigma'])
+        print("    weights: \n", trial.user_attrs['params']['weights'])
+            
 
+    # Save the parameters.
+    checkpoint_manager.save(source_index, {'best_trial': best_trial, 'trials': study.trials})
     
 if __name__ == '__main__':
     app.run(main)

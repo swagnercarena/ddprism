@@ -28,6 +28,7 @@ def get_config():
     config.post_rtol = 1e-6
     config.post_maxiter = 1
     config.post_use_dplr = True
+    config.post_safe_divide = 1e-32
 
     # Training parameters.
     config.lr_init_val = 1e-5
@@ -57,10 +58,10 @@ def get_config():
 
     # Sampling arguments
     config.sampling_kwargs = ConfigDict(
-        {'steps': 64, 'sampler': 'pc', 'corrections': 1, 'tau': 1e-1}
+        {'steps': 64, 'sampler': 'pc', 'corrections': 1, 'tau': 1e-2}
     )
     config.gaussian_sampling_kwargs = ConfigDict(
-        {'steps': 64, 'sampler': 'pc', 'corrections': 1, 'tau': 1e-1}
+        {'steps': 64, 'sampler': 'pc', 'corrections': 1, 'tau': 1e-2}
     )
     config.sample_batch_size = 16
 

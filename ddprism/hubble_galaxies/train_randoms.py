@@ -88,7 +88,8 @@ def create_posterior_train_state(
     posterior_denoiser = diffusion.PosteriorDenoiserJointDiagonal(
         denoiser_models=denoiser_models, y_features=feat_dim,
         rtol=config.post_rtol, maxiter=config.post_maxiter,
-        use_dplr=config.post_use_dplr
+        use_dplr=config.post_use_dplr,
+        safe_divide=config.get('post_safe_divide', 1e-32)
     )
 
     # Initialize posterior denoiser.

@@ -19,24 +19,16 @@ import load_dataset
 from ddprism.pcpca import pcpca_utils
 
 jax.config.update("jax_enable_x64", True)
-
+    
 FLAGS = flags.FLAGS
+    
 flags.DEFINE_string('workdir', None, 'working directory.')
 config_flags.DEFINE_config_file(
     'config', None, 'File path to the training configuration.',
 )
 
-
-def main(_):
-    """Train a joint posterior denoiser."""
-    config = FLAGS.config
+def run_pcpca(config, workdir, metrics=True):
     rng = jax.random.PRNGKey(config.rng_key)
-
-    workdir = FLAGS.workdir
-    os.makedirs(workdir, exist_ok=True)
-
-    print(f'Found devices {jax.devices()}')
-    print(f'Working directory: {workdir}')
 
     # Set up wandb logging and checkpointing.
     wandb.init(
@@ -71,7 +63,9 @@ def main(_):
     regularization = getattr(config, 'regularization', 1e-6)
 
     # Do each PCPCA / PPCA analysis.
+    metrics = {}
     for source_index in range(config.n_sources):
+
         # Get the gamma and relevant observations.
         gamma = gamma_list[source_index]
 
@@ -122,9 +116,11 @@ def main(_):
         # Initialize Adam optimizer
         optimizer = optax.adam(learning_rate=schedule)
         opt_state = optimizer.init(params)
-
+        
         # Run the optimization loop.
         pbar = tqdm(range(config.n_iter), desc=f'Source {source_index + 1}')
+        # Define the custom step metric
+        wandb.define_metric("loss_step")
         for step in pbar:
             grad = jax.jit(pcpca_utils.loss_grad)(
                 params, y_enr, y_bkg, enr_a_mat, bkg_a_mat, gamma,
@@ -141,7 +137,11 @@ def main(_):
             params['log_sigma'] = jnp.log(config.sigma_y) # Fix log_sigma.
 
             # Log our loss.
-            wandb.log({f'loss {source_index + 1}': loss}, step=step)
+            # Define which metrics to plot against that x-axis
+            wandb.define_metric(f'loss {source_index + 1}', step_metric='loss_step')
+
+            wandb.log({f'loss {source_index + 1}': loss, 'loss_step': step}, 
+                     )
             pbar.set_postfix({'loss': f'{loss:.6f}'})
 
         # Get the posterior for the signal underlying the observation.
@@ -160,16 +160,14 @@ def main(_):
             x_all[:config.sinkhorn_samples, source_index]
         )
         wandb.log(
-            {f'div_post_{source_index+1}': divergence_x_draws},
-            step=config.n_iter
+            {f'div_post_{source_index+1}': divergence_x_draws}, commit=False
         )
 
         # Log a figure with new posterior samples.
         if config.log_figure:
             fig = plotting_utils.show_corner(x_post_draws)._figure
             wandb.log(
-                    {f'posterior samples {source_index+1}': wandb.Image(fig)},
-                    step=config.n_iter
+                    {f'posterior samples {source_index+1}': wandb.Image(fig)}, commit=False
                 )
 
         # Plot samples from the prior
@@ -183,20 +181,41 @@ def main(_):
             x_prior_draws[:config.sinkhorn_samples],
             x_all[:config.sinkhorn_samples, source_index]
         )
+        
         wandb.log(
-            {f'div_prior_{source_index+1}': divergence_x_prior_draws},
-            step=config.n_iter
+            {f'div_prior_{source_index+1}': divergence_x_prior_draws}, commit=False
         )
 
         if config.log_figure:
             fig = plotting_utils.show_corner(x_prior_draws)._figure
             wandb.log(
-                    {f'prior samples {source_index+1}': wandb.Image(fig)},
-                    step=config.n_iter
+                    {f'prior samples {source_index+1}': wandb.Image(fig)}, commit=False
                 )
 
         # Save the parameters.
         checkpoint_manager.save(source_index, params)
+        
+        # Record performance metrics (Sinkhorn divergence for posterior and prior samples, ... ).
+        metrics[f'div_post_{source_index+1}'] = float(divergence_x_draws)
+        metrics[f'div_prior_{source_index+1}'] = float(divergence_x_prior_draws)
 
+    wandb.finish()
+    return metrics
+
+    
+def main(_):
+    """Find best PCPCA parameters for each source by minimizing PCPCA loss function."""
+    config = FLAGS.config
+
+    workdir = FLAGS.workdir
+    os.makedirs(workdir, exist_ok=True)
+
+    print(f'Found devices {jax.devices()}')
+    print(f'Working directory: {workdir}')
+    
+    metrics=run_pcpca(config, workdir)
+    print(metrics)
+
+    
 if __name__ == '__main__':
     app.run(main)

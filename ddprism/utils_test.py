@@ -192,7 +192,7 @@ class UtilsTests(chex.TestCase):
         self.assertGreater(
             utils.sinkhorn_divergence(u, v), utils.sinkhorn_divergence(u, v_new)
         )
-
+    #TODO: test psnr
 
 if __name__ == '__main__':
     absltest.main()

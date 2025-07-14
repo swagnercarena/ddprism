@@ -4,6 +4,7 @@ import os
 
 from absl import app, flags
 from einops import rearrange
+import gc
 from flax import jax_utils
 from flax.training import orbax_utils, train_state
 import jax
@@ -22,6 +23,7 @@ from ddprism.corrupted_mnist import metrics
 
 from build_parent_sample import NUMPIX
 import load_datasets
+import training_dynamics
 
 FLAGS = flags.FLAGS
 flags.DEFINE_string('workdir', None, 'working directory.')
@@ -298,7 +300,7 @@ def main(_):
     checkpoint_manager.wait_until_finished()
 
     # Log our initial metrics.
-    wandb.log(initial_metrics, step=0)
+    wandb.log(initial_metrics)
 
     # Initialize our state and posterior state.
     rng_state, rng = jax.random.split(rng, 2)
@@ -318,20 +320,31 @@ def main(_):
     # Create the apply_model function with config
     apply_model = apply_model_with_config(config)
 
-    # Change the sampling parameters to those for the diffusion model.
-    sample_pmap = jax.pmap(
-        functools.partial(
-            sample, image_shape=image_shape,
-            sample_batch_size=config.sample_batch_size,
-            sampling_kwargs=config.sampling_kwargs
-        ),
-        axis_name='batch'
-    )
-
     print('Beginning EM laps for diffusion model fitting.')
     for lap in tqdm(range(config.em_laps), desc='EM Lap'):
+        # Compute dynamic parameters for this lap
+        dynamic_epochs = training_dynamics.compute_dynamic_epochs(
+            lap, config.epochs, config.em_laps
+        )
+        dynamic_sampling_kwargs = training_dynamics.get_dynamic_sampling_kwargs(
+            config.sampling_kwargs, lap, config.em_laps
+        )
+
+        # Create sampling function with dynamic parameters for this lap. Delete
+        # the previous compiled sample_pmap to free memory before recompiling.
+        del sample_pmap
+        gc.collect()
+        sample_pmap = jax.pmap(
+            functools.partial(
+                sample, image_shape=image_shape,
+                sample_batch_size=config.sample_batch_size,
+                sampling_kwargs=dynamic_sampling_kwargs
+            ),
+            axis_name='batch'
+        )
+
         # Training laps between samples.
-        pbar = tqdm(range(config.epochs), desc='Epoch', leave=False)
+        pbar = tqdm(range(dynamic_epochs), desc='Epoch', leave=False)
         for epoch in pbar:
             # Grab a batch of the data for this training step.
             rng_data, rng_apply, rng = jax.random.split(rng, 3)
@@ -347,6 +360,8 @@ def main(_):
             state_unet = update_model( # pylint: disable=not-callable
                 state_unet, grads
             )
+            # Techincally calculates the ema decay without accounting for the
+            # dynamic number of epochs.
             ema = ema.update(
                 jax_utils.unreplicate(state_unet).params,
                 config.ema_decay ** (
@@ -355,8 +370,7 @@ def main(_):
                 )
             )
             wandb.log(
-                {'loss_state': jax_utils.unreplicate(loss)},
-                step=(lap * config.epochs + epoch)
+                {'loss_state': jax_utils.unreplicate(loss)}
             )
 
         # Generate new posterior samples with our model using a new draw
@@ -417,7 +431,7 @@ def main(_):
         )
 
         # Log our metrics.
-        wandb.log(lap_metrics, step=(lap * config.epochs + epoch))
+        wandb.log(lap_metrics, commit=False)
 
         # Initialize our next state with the current parameters.
         state_unet = training_utils.create_train_state_unet(

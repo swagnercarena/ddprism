@@ -433,7 +433,7 @@ class UNet(nn.Module):
                 x = nn.Dense(out_channels)(x)
             else:
                 # For all other layers conduct an upsampling iteration.
-                x = Resample(upsample_factor, method='nearest')(x)
+                x = Resample(upsample_factor, method="lanczos3")(x)
 
         return x
 

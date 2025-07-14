@@ -13,23 +13,28 @@ from ddprism.pcpca import pcpca_utils
 
 def _create_test_data(rng, batch_size=16, features=5, latent_dim=3):
     """Create test data for PCPCA functions."""
-    rng_keys = jax.random.split(rng, 6)
+    rng_keys = jax.random.split(rng, 8)
 
     # Create parameters
     weights = jax.random.normal(rng_keys[0], (features, latent_dim))
     log_sigma = jax.random.normal(rng_keys[1], ())
-    params = {'weights': weights, 'log_sigma': log_sigma}
+    mu_x = jax.random.normal(rng_keys[2], (features,))
+    mu_y = jax.random.normal(rng_keys[3], (features,))
+    params = {
+        'weights': weights, 'log_sigma': log_sigma,
+        'mu_x': mu_x, 'mu_y': mu_y
+    }
 
     # Create observations
-    x_obs = jax.random.normal(rng_keys[2], (batch_size, features))
-    y_obs = jax.random.normal(rng_keys[3], (batch_size, features))
+    x_obs = jax.random.normal(rng_keys[4], (batch_size, features))
+    y_obs = jax.random.normal(rng_keys[5], (batch_size, features))
 
     # Create transformation matrices
     x_a_mat = jax.random.normal(
-        rng_keys[4], (batch_size, features, features)
+        rng_keys[6], (batch_size, features, features)
     )
     y_a_mat = jax.random.normal(
-        rng_keys[5], (batch_size, features, features)
+        rng_keys[7], (batch_size, features, features)
     )
 
     # Gamma parameter
@@ -114,6 +119,12 @@ class PCPCAUtilsTests(chex.TestCase):
         self.assertTupleEqual(
             grads['log_sigma'].shape, params['log_sigma'].shape
         )
+        self.assertTupleEqual(
+            grads['mu_x'].shape, params['mu_x'].shape
+        )
+        self.assertTupleEqual(
+            grads['mu_y'].shape, params['mu_y'].shape
+        )
 
         # Compute automatic gradients
         loss_func = lambda p: pcpca_utils.loss(
@@ -127,6 +138,12 @@ class PCPCAUtilsTests(chex.TestCase):
         )
         self.assertAlmostEqual(
             grads['log_sigma'], auto_grads['log_sigma'], places=5
+        )
+        self.assertTrue(
+            jnp.allclose(grads['mu_x'], auto_grads['mu_x'], rtol=1e-5)
+        )
+        self.assertTrue(
+            jnp.allclose(grads['mu_y'], auto_grads['mu_y'], rtol=1e-5)
         )
 
     @chex.all_variants

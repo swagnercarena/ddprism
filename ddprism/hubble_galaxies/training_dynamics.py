@@ -14,7 +14,7 @@ def compute_dynamic_epochs(lap, base_epochs, total_laps):
     Returns:
         Number of epochs for current EM lap.
     """
-    power = lap // (total_laps // 4)
+    power = lap // (total_laps // 4) if total_laps > 1 else 0
     factor = 2 ** power
     return int(base_epochs * factor)
 
@@ -29,7 +29,7 @@ def compute_dynamic_sampling_steps(lap, base_steps, total_laps):
         base_steps: Number of sampling steps for the first EM lap.
         total_laps: Total number of EM laps.
     """
-    power = lap // (total_laps // 4)
+    power = lap // (total_laps // 4) if total_laps > 1 else 0
     factor = 2 ** power
     return int(base_steps * factor)
 

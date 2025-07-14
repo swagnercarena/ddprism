@@ -88,7 +88,7 @@ def loss(
         regularization: Small value to add to diagonal for numerical stability.
     """
 
-    weights, log_sigma = params['weights'], params['log_sigma']
+    weights, log_sigma = params['weights'], params['log_sigma'], params['mu_x'], params['mu_y']
     sigma = jnp.exp(log_sigma)
 
     c_mat = jax.vmap(compute_aux_matrix, in_axes=(None, 0, None))(
@@ -104,7 +104,7 @@ def loss(
     )
     loss_value += -0.5 * jnp.mean(
         jax.vmap(stable_quadratic, in_axes=(0, 0, None))(
-            c_mat, x_obs, regularization
+            c_mat, x_obs - jnp.matmul(x_a_mat, mu_x[..., None]).squeeze(-1), regularization
         )
     )
 
@@ -114,7 +114,7 @@ def loss(
     )
     loss_value += 0.5 * gamma * jnp.mean(
         jax.vmap(stable_quadratic, in_axes=(0, 0, None))(
-            d_mat, y_obs, regularization
+            d_mat, y_obs - jnp.matmul(y_a_mat, mu_y[..., None]).squeeze(-1), regularization
         )
     )
 
@@ -250,7 +250,7 @@ def calculate_posterior(
     Notes:
         See paper for derivation.
     """
-    weights, log_sigma = params['weights'], params['log_sigma']
+    weights, log_sigma = params['weights'], params['log_sigma'], params['mu_x'], params['mu_y']
     sigma_sq = jnp.exp(2 * log_sigma)
 
     # First compute the covariance matrix.
@@ -262,6 +262,6 @@ def calculate_posterior(
     )
 
     # Compute posterior mean
-    mean_post = (1/sigma_sq) * sigma_post @ a_mat.T @ y_obs
+    mean_post = sigma_post @ ( prior_precision @ mu_x + (1/sigma_sq) * a_mat.T @ y_obs)
 
     return mean_post, sigma_post

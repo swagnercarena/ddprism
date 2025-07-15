@@ -88,8 +88,8 @@ def loss(
         regularization: Small value to add to diagonal for numerical stability.
     """
     # Unpack parameters.
-    weights, log_sigma, mu_x, mu_y = (
-        params['weights'], params['log_sigma'], params['mu_x'], params['mu_y']
+    weights, log_sigma, mu = (
+        params['weights'], params['log_sigma'], params['mu']
     )
     sigma = jnp.exp(log_sigma)
 
@@ -104,7 +104,7 @@ def loss(
     loss_value = - 0.5 * jnp.mean(
         jax.vmap(log_det_cholesky, in_axes=(0, None))(c_mat, regularization)
     )
-    x_residual = x_obs - jnp.matmul(x_a_mat, mu_x[..., None]).squeeze(-1)
+    x_residual = x_obs - jnp.matmul(x_a_mat, mu[..., None]).squeeze(-1)
     loss_value += -0.5 * jnp.mean(
         jax.vmap(stable_quadratic, in_axes=(0, 0, None))(
             c_mat, x_residual, regularization
@@ -115,7 +115,7 @@ def loss(
     loss_value += 0.5 * gamma * jnp.mean(
         jax.vmap(log_det_cholesky, in_axes=(0, None))(d_mat, regularization)
     )
-    y_residual = y_obs - jnp.matmul(y_a_mat, mu_y[..., None]).squeeze(-1)
+    y_residual = y_obs - jnp.matmul(y_a_mat, mu[..., None]).squeeze(-1)
     loss_value += 0.5 * gamma * jnp.mean(
         jax.vmap(stable_quadratic, in_axes=(0, 0, None))(
             d_mat, y_residual, regularization
@@ -147,14 +147,14 @@ def loss_grad(
         of the weights and log sigma respectively.
     """
     # Unpack parameters.
-    weights, log_sigma, mu_x, mu_y = (
-        params['weights'], params['log_sigma'], params['mu_x'], params['mu_y']
+    weights, log_sigma, mu = (
+        params['weights'], params['log_sigma'], params['mu']
     )
     sigma = jnp.exp(log_sigma)
 
     # Calculate the residuals.
-    x_residual = x_obs - jnp.matmul(x_a_mat, mu_x[..., None]).squeeze(-1)
-    y_residual = y_obs - jnp.matmul(y_a_mat, mu_y[..., None]).squeeze(-1)
+    x_residual = x_obs - jnp.matmul(x_a_mat, mu[..., None]).squeeze(-1)
+    y_residual = y_obs - jnp.matmul(y_a_mat, mu[..., None]).squeeze(-1)
 
     c_mat = jax.vmap(compute_aux_matrix, in_axes=(None, 0, None))(
         weights, x_a_mat, sigma
@@ -221,32 +221,32 @@ def loss_grad(
     # Start with linear terms.
     c_inv_x = stable_solve_vmap(c_mat, x_obs[:, :, None], regularization)
     d_inv_y = stable_solve_vmap(d_mat, y_obs[:, :, None], regularization)
-    grad_mu_x = jnp.mean(
+    grad_mu = jnp.mean(
         jnp.einsum('ijk,ijl->il', c_inv_x, x_a_mat),
         axis=0
     )
-    grad_mu_y = - gamma * jnp.mean(
+    grad_mu += - gamma * jnp.mean(
         jnp.einsum('ijk,ijl->il', d_inv_y, y_a_mat),
         axis=0
     )
 
     # Add quadratic terms.
     c_mat_inv_xa = stable_solve_vmap(
-        c_mat, jnp.einsum('ijk,k->ij', x_a_mat, mu_x), regularization
+        c_mat, jnp.einsum('ijk,k->ij', x_a_mat, mu), regularization
     )
     d_mat_inv_ya = stable_solve_vmap(
-        d_mat, jnp.einsum('ijk,k->ij', y_a_mat, mu_y), regularization
+        d_mat, jnp.einsum('ijk,k->ij', y_a_mat, mu), regularization
     )
-    grad_mu_x += -jnp.mean(
+    grad_mu += -jnp.mean(
         jnp.einsum('ij,ijl->il', c_mat_inv_xa, x_a_mat), axis=0
     )
-    grad_mu_y += gamma * jnp.mean(
+    grad_mu += gamma * jnp.mean(
         jnp.einsum('ij,ijl->il', d_mat_inv_ya, y_a_mat), axis=0
     )
 
     return {
         'weights': grad_weights, 'log_sigma': grad_log_sigma,
-        'mu_x': grad_mu_x, 'mu_y': grad_mu_y
+        'mu': grad_mu
     }
 
 
@@ -288,8 +288,8 @@ def calculate_posterior(
     Notes:
         See paper for derivation.
     """
-    weights, log_sigma, mu_x = (
-        params['weights'], params['log_sigma'], params['mu_x']
+    weights, log_sigma, mu = (
+        params['weights'], params['log_sigma'], params['mu']
     )
     sigma_sq = jnp.exp(2 * log_sigma)
 
@@ -301,10 +301,10 @@ def calculate_posterior(
         (1/sigma_sq) * a_mat.T @ a_mat + prior_precision
     )
 
-    y_residual = y_obs - jnp.matmul(a_mat, mu_x[..., None]).squeeze(-1)
-
     # Compute posterior mean
-    mean_post = (1/sigma_sq) * sigma_post @ a_mat.T @ y_residual
+    mean_post = sigma_post @ (
+        1 / sigma_sq * a_mat.T @ y_obs + prior_precision @ mu
+    )
 
     return mean_post, sigma_post
 

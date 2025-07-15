@@ -13,16 +13,15 @@ from ddprism.pcpca import pcpca_utils
 
 def _create_test_data(rng, batch_size=16, features=5, latent_dim=3):
     """Create test data for PCPCA functions."""
-    rng_keys = jax.random.split(rng, 8)
+    rng_keys = jax.random.split(rng, 6)
 
     # Create parameters
     weights = jax.random.normal(rng_keys[0], (features, latent_dim))
     log_sigma = jax.random.normal(rng_keys[1], ())
-    mu_x = jax.random.normal(rng_keys[2], (features,))
-    mu_y = jax.random.normal(rng_keys[3], (features,))
+    mu = jax.random.normal(rng_keys[2], (features,))
     params = {
         'weights': weights, 'log_sigma': log_sigma,
-        'mu_x': mu_x, 'mu_y': mu_y
+        'mu': mu
     }
 
     # Create observations
@@ -120,10 +119,7 @@ class PCPCAUtilsTests(chex.TestCase):
             grads['log_sigma'].shape, params['log_sigma'].shape
         )
         self.assertTupleEqual(
-            grads['mu_x'].shape, params['mu_x'].shape
-        )
-        self.assertTupleEqual(
-            grads['mu_y'].shape, params['mu_y'].shape
+            grads['mu'].shape, params['mu'].shape
         )
 
         # Compute automatic gradients
@@ -140,10 +136,7 @@ class PCPCAUtilsTests(chex.TestCase):
             grads['log_sigma'], auto_grads['log_sigma'], places=5
         )
         self.assertTrue(
-            jnp.allclose(grads['mu_x'], auto_grads['mu_x'], rtol=1e-5)
-        )
-        self.assertTrue(
-            jnp.allclose(grads['mu_y'], auto_grads['mu_y'], rtol=1e-5)
+            jnp.allclose(grads['mu'], auto_grads['mu'], rtol=1e-5)
         )
 
     @chex.all_variants
@@ -159,8 +152,8 @@ class PCPCAUtilsTests(chex.TestCase):
         # Create parameters, observations, and transformation matrix
         weights = jax.random.normal(rng_keys[0], (signal_features, latent_dim))
         log_sigma = jax.random.normal(rng_keys[1])
-        mu_x = jax.random.normal(rng_keys[2], (signal_features,))
-        params = {'weights': weights, 'log_sigma': log_sigma, 'mu_x': mu_x}
+        mu = jax.random.normal(rng_keys[2], (signal_features,))
+        params = {'weights': weights, 'log_sigma': log_sigma, 'mu': mu}
         y_obs = jax.random.normal(rng_keys[3], (obs_features,))
         a_mat = jax.random.normal(rng_keys[4], (obs_features, signal_features))
 
@@ -178,7 +171,7 @@ class PCPCAUtilsTests(chex.TestCase):
         # Check the edge case when the transformation matrix is zero.
         a_mat = jnp.zeros((obs_features, signal_features))
         mean_post, sigma_post = apply_func(params, y_obs, a_mat)
-        self.assertTrue(jnp.allclose(mean_post, jnp.zeros((signal_features,))))
+        self.assertTrue(jnp.allclose(mean_post, mu))
         self.assertTrue(jnp.allclose(sigma_post, weights @ weights.T))
 
         # Check the edge case when the transformation matrix is the identity and
@@ -188,9 +181,9 @@ class PCPCAUtilsTests(chex.TestCase):
         params['weights'] = jax.random.normal(
             rng_keys[0], (obs_features, latent_dim)
         )
-        params['mu_x'] = jax.random.normal(rng_keys[2], (obs_features,))
+        params['mu'] = jax.random.normal(rng_keys[2], (obs_features,))
         mean_post, sigma_post = apply_func(params, y_obs, a_mat)
-        self.assertTrue(jnp.allclose(mean_post, y_obs - params['mu_x']))
+        self.assertTrue(jnp.allclose(mean_post, y_obs))
         self.assertTrue(
             jnp.allclose(sigma_post, jnp.zeros((obs_features, obs_features)))
         )

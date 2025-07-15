@@ -23,6 +23,9 @@ def sampling(
         steps: Number of discrete steps to use in DDPM.
         t: Initial t of the xt samples. Will be evolved to t=0 and default is
             t=1.
+        sampler: Sampler to use. Options are 'ddpm', 'ddim', 'pc', 'edm', and
+            'pc_edm'.
+        **kwargs: Additional keyword arguments for the sampler and clipping.
 
     Returns:
         Samples at t=0.
@@ -58,7 +61,9 @@ def sampling(
     # Apply one final denoiser step to the final samples for optimal
     # performance.
     t0 = jnp.zeros(x0.shape[:-1])
-    return state.apply_fn(params, x0, t0, train=False)
+    return _apply_sample_clipping(
+        state.apply_fn(params, x0, t0, train=False), 0.0, **kwargs
+    )
 
 
 def _add_batch_dim_time(xt_shape: Sequence[int], time: Array) -> Array:
@@ -138,7 +143,9 @@ def _step_ddpm(
     # Follows Eq. (47) in Score-Based Generative Modeling through Stochastic
     # Differential Equations (Song et al., 2021)
     # https://arxiv.org/abs/2011.13456
-    return xt - tau * (xt - e_x_t) + sigma_s * jnp.sqrt(tau) * eps
+    xs = xt - tau * (xt - e_x_t) + sigma_s * jnp.sqrt(tau) * eps
+
+    return _apply_sample_clipping(xs, s, **kwargs)
 
 
 def _step_ddim(
@@ -174,7 +181,9 @@ def _step_ddim(
     # (Song, Meng, and Ermon 2022), https://arxiv.org/abs/2010.02502
     # With replacing the source noise by the score function
     # (e.g. Eq. (151) in Luo 2022, https://arxiv.org/abs/2208.11970).
-    return xt - (1 - sigma_s / sigma_t) * (xt - e_x_t)
+    xs = xt - (1 - sigma_s / sigma_t) * (xt - e_x_t)
+
+    return _apply_sample_clipping(xs, s, **kwargs)
 
 
 def _step_pc(
@@ -203,13 +212,12 @@ def _step_pc(
     """
     tau = jnp.asarray(tau)
 
-    xs = _step_ddim(key, state, params, xt, t, s)
+    xs = _step_ddim(key, state, params, xt, t, s, **kwargs)
 
     # Function for scan.
     def correction_step(xs, key_corr):
-        return (
-            _correct(key_corr, state, params, xs, s, tau, tau_min, alpha), None
-        )
+        corrected = _correct(key_corr, state, params, xs, s, tau, tau_min, alpha)
+        return _apply_sample_clipping(corrected, s, **kwargs), None
 
     # Apply corrections.
     keys = jax.random.split(key, corrections)
@@ -336,3 +344,71 @@ def _step_pc_edm(
     xs, _ = jax.lax.scan(correction_step, xs, keys)
 
     return xs
+
+
+def _apply_sample_clipping(
+    x: Array, t: float, clip_method: Optional[str] = 'none',
+    clip_adaptive: Optional[bool] = False, clip_value: Optional[float] = 4.0,
+    clip_early_strength: Optional[float] = 0.5,
+    clip_late_strength: Optional[float] = 1.0,
+    clip_percentile_low: Optional[float] = 0.1,
+    clip_percentile_high: Optional[float] = 99.9,
+    clip_std_dev_threshold: Optional[float] = 4.0, **kwargs
+) -> Array:
+    """Apply progressive clipping to prevent sample divergence.
+
+    Arguments:
+        x: Samples to clip. Shape (*, features)
+        t: Current time step (0 to 1, where 1 is pure noise)
+        clip_method: Type of clipping to apply. Options are 'none', 'value',
+            'percentile', and 'std_dev'.
+        clip_adaptive: Whether to use adaptive clipping.
+        clip_value: Value to clip to for value clipping.
+        clip_early_strength: Strength of clipping early in sampling.
+        clip_late_strength: Strength of clipping late in sampling.
+        clip_percentile_low: Lower percentile to clip to.
+        clip_percentile_high: Upper percentile to clip to.
+
+    Returns:
+        Clipped samples.
+    """
+    # Always calculate the adaptive factor, jit will throw away if not used.
+    adaptive_factor = (
+        clip_early_strength +
+        (clip_late_strength - clip_early_strength) * (1 - t)
+    )
+
+    if clip_method == 'none':
+        return x
+    elif clip_method == 'value':
+        # Simple value clipping
+        if clip_adaptive:
+            clip_value = clip_value * adaptive_factor
+        return jnp.clip(x, -clip_value, clip_value)
+    elif clip_method == 'percentile':
+        # Apply adaptive strength if requested
+        if clip_adaptive:
+            # Adjust percentiles based on time step
+            mid_pct = 50.0
+            clip_percentile_low = (
+                mid_pct - (mid_pct - clip_percentile_low) * adaptive_factor
+            )
+            clip_percentile_high = (
+                mid_pct + (clip_percentile_high - mid_pct) * adaptive_factor
+            )
+        low_val = jnp.percentile(x, clip_percentile_low)
+        high_val = jnp.percentile(x, clip_percentile_high)
+        return jnp.clip(x, low_val, high_val)
+    elif clip_method == 'std_dev':
+        # Standard deviation-based clipping
+        if clip_adaptive:
+            clip_std_dev_threshold = clip_std_dev_threshold * adaptive_factor
+        mean_val = jnp.mean(x)
+        std_val = jnp.std(x)
+        return jnp.clip(
+            x, mean_val - clip_std_dev_threshold * std_val,
+            mean_val + clip_std_dev_threshold * std_val
+        )
+    else:
+        # Unknown method, raise an error.
+        raise ValueError(f'Unknown clipping method: {clip_method}')

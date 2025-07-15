@@ -307,3 +307,72 @@ def calculate_posterior(
     mean_post = (1/sigma_sq) * sigma_post @ a_mat.T @ y_residual
 
     return mean_post, sigma_post
+
+##### No A_mat
+def compute_aux_matrix_no_a_mat(
+    weights: jnp.ndarray, sigma: jnp.ndarray
+) -> jnp.ndarray:
+    """Compute the auxillary matrix for PCPCA loss function.
+
+    Args:
+        weights: Weights from latent space to signal space.
+        a_mat: Transformation matrix for the observation.
+        sigma: Variance of the observation.
+
+    Returns:
+        Auxillary matrix for PCPCA loss function.
+    """
+    mat_prod = weights @ weights.T 
+    mat_prod += (sigma ** 2) * jnp.eye(a_mat.shape[0])
+
+    return mat_prod
+    
+def loss_no_a_mat(
+    params: Dict[str, jnp.ndarray], x_obs: jnp.ndarray, y_obs: jnp.ndarray,
+    gamma: float, regularization: float = 1e-6
+) -> jnp.ndarray:
+    """Loss function for estimating PCPCA parameters.
+
+    Reference: Section 7.1 of of https://arxiv.org/pdf/2012.07977.
+
+    Args:
+        params: Parameters of the PCPCA model. Dict with keys 'weights' and
+            'log_sigma'.
+        x_obs: Observed data with enriched signal.
+        y_obs: Observed data with only background signal.
+        gamma: Multiplier for contrastive term in loss function.
+        regularization: Small value to add to diagonal for numerical stability.
+    """
+    # Unpack parameters.
+    weights, log_sigma, mu_x, mu_y = (
+        params['weights'], params['log_sigma'], params['mu_x'], params['mu_y']
+    )
+    sigma = jnp.exp(log_sigma)
+
+    c_mat = weights @ weights.T + (sigma ** 2) * jnp.eye(params['mu_y'].shape[0])[None, ...]
+    d_mat = c_mat.copy()
+    print(c_mat.shape)
+    # Loss terms from the enriched signal.
+    loss_value = - 0.5 * jnp.mean(
+        jax.vmap(log_det_cholesky, in_axes=(0, None))(c_mat, regularization)
+    )
+    x_residual = x_obs - mu_x
+    print(x_residual.shape)
+    loss_value += -0.5 * jnp.mean(
+        jax.vmap(stable_quadratic, in_axes=(0, 0, None))(
+            c_mat, x_residual[:, None], regularization
+        )
+    )
+
+    # Loss terms from the background signal.
+    loss_value += 0.5 * gamma * jnp.mean(
+        jax.vmap(log_det_cholesky, in_axes=(0, None))(d_mat, regularization)
+    )
+    y_residual = y_obs - mu_y
+    loss_value += 0.5 * gamma * jnp.mean(
+        jax.vmap(stable_quadratic, in_axes=(0, 0, None))(
+            d_mat, y_residual, regularization
+        )
+    )
+
+    return loss_value

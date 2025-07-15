@@ -19,7 +19,7 @@ import wandb
 from ddprism import diffusion
 from ddprism import training_utils
 from ddprism import utils
-from ddprism.corrupted_mnist import metrics
+from ddprism.metrics import image_metrics as metrics
 
 from build_parent_sample import NUMPIX
 import load_datasets
@@ -89,7 +89,8 @@ def create_posterior_train_state(
         denoiser_models=denoiser_models, y_features=feat_dim,
         rtol=config.post_rtol, maxiter=config.post_maxiter,
         use_dplr=config.post_use_dplr,
-        safe_divide=config.get('post_safe_divide', 1e-32)
+        safe_divide=config.get('post_safe_divide', 1e-32),
+        regularization=config.get('post_regularization', 0.0),
     )
 
     # Initialize posterior denoiser.

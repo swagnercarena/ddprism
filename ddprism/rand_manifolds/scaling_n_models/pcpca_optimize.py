@@ -1,33 +1,24 @@
-"Perform PCPCA analysis of missing data with n_sources."
+"Perform PCPCA optuna runs."
+
+from functools import partial
 import os
 
 from absl import app, flags
 import jax
-import jax.numpy as jnp
 from ml_collections import config_flags
-from orbax.checkpoint import CheckpointManager, CheckpointManagerOptions
-from orbax.checkpoint import PyTreeCheckpointer
-import optax
-from tqdm import tqdm
-
-from ddprism import utils
-from ddprism.pcpca import pcpca_utils
-
-import load_dataset
-from pcpca_train import run_pcpca
-
 import optuna
-from optuna.trial import TrialState
-from functools import partial
+
+from pcpca_train import run_pcpca
 
 jax.config.update("jax_enable_x64", True)
 
 FLAGS = flags.FLAGS
-    
+
 flags.DEFINE_string('workdir_optuna', None, 'working directory.')
 config_flags.DEFINE_config_file(
     'config_optuna', None, 'File path to the training configuration.',
 )
+
 
 def objective(trial, config, workdir):
     # Run the PCPCA algorithm
@@ -52,13 +43,18 @@ def objective(trial, config, workdir):
 
     metrics = run_pcpca(config_pcpca, workdir, metrics=True)
     trial.set_user_attr("trial_metrics", metrics)
-    
+
     return metrics[f'div_post_2']
 
+
 def main(_):
-    """Optimize over PCPCA parameters to find the parameters for reconstructing source 2 distribution."""
+    """Optimize over PCPCA parameters.
+
+    Notes:
+        - The objective function returns the Sinkhorn divergence for source 2.
+    """
     config = FLAGS.config_optuna
-    
+
     workdir = FLAGS.workdir_optuna
     os.makedirs(workdir, exist_ok=True)
 
@@ -70,12 +66,15 @@ def main(_):
     objective_fn = partial(objective_fn, config=config, workdir=workdir)
 
     # Create a new study.
-    study_name = config.wandb_kwargs.get('project')  
+    study_name = config.wandb_kwargs.get('project')
     storage_name = f"sqlite:///{workdir}/{study_name}.db"
-    study = optuna.create_study(study_name=study_name, storage=storage_name, direction="minimize")
+    study = optuna.create_study(
+        study_name=study_name, storage=storage_name, direction="minimize"
+    )
 
     # Run optuna.
     study.optimize(objective_fn, n_trials=config.n_trials, timeout=None)
-    
+
+
 if __name__ == '__main__':
     app.run(main)

@@ -35,7 +35,7 @@ def get_config():
     config.lr_end_val = 1e-6
     config.epochs = 65536
     config.batch_size = 1024
-    config.gaussian_em_laps = 16 
+    config.gaussian_em_laps = 16
     config.diffusion_em_laps = [16, 96, 192]
     config.gaussian_dplr_rank = 2
 
@@ -46,8 +46,11 @@ def get_config():
     config.gaussian_sampling_kwargs = ConfigDict(
         {'steps': 16384, 'sampler': 'pc', 'corrections': 1, 'tau': 1e-1}
     )
-    
+
     config.sinkhorn_samples = 16384
+    config.pqmass_samples = 16384
+    config.psnr_samples = 16384
+
     config.sampling_mask = True
     config.sampling_strategy = 'joint'
 

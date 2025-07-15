@@ -11,7 +11,7 @@ import optax
 from tqdm import tqdm
 import wandb
 
-from ddprism import utils
+from ddprism.metrics import metrics
 from ddprism.pcpca import pcpca_utils
 from ddprism import plotting_utils
 from ddprism.rand_manifolds.random_manifolds import MAX_SPREAD
@@ -73,7 +73,7 @@ def run_pcpca(config, workdir):
     regularization = getattr(config, 'regularization', 1e-6)
 
     # Do each PCPCA / PPCA analysis.
-    metrics = {}
+    metrics_dict = {}
     for source_index in range(config.n_sources):
 
         # Get the gamma and relevant observations.
@@ -183,7 +183,7 @@ def run_pcpca(config, workdir):
         )
 
         # Calculate pqmass for posterior samples.
-        pqmass_x_draws = metrics.pqmass(
+        pqmass_x_draws = metrics.pq_mass(
             x_post_draws[:config.pqmass_samples],
             x_all[:config.pqmass_samples, source_index]
         )
@@ -228,7 +228,7 @@ def run_pcpca(config, workdir):
         )
 
         # Calculate pqmass for prior samples.
-        pqmass_x_prior_draws = metrics.pqmass(
+        pqmass_x_prior_draws = metrics.pq_mass(
             x_prior_draws[:config.pqmass_samples],
             x_all[:config.pqmass_samples, source_index]
         )
@@ -259,15 +259,15 @@ def run_pcpca(config, workdir):
         checkpoint_manager.save(source_index, params)
 
         # Record performance metrics.
-        metrics[f'div_post_{source_index+1}'] = float(divergence_x_draws)
-        metrics[f'div_prior_{source_index+1}'] = float(divergence_x_prior_draws)
-        metrics[f'pqmass_post_{source_index+1}'] = float(pqmass_x_draws)
-        metrics[f'pqmass_prior_{source_index+1}'] = float(pqmass_x_prior_draws)
-        metrics[f'psnr_post_{source_index+1}'] = float(psnr_x_draws)
-        metrics[f'psnr_prior_{source_index+1}'] = float(psnr_x_prior_draws)
+        metrics_dict[f'div_post_{source_index+1}'] = float(divergence_x_draws)
+        metrics_dict[f'div_prior_{source_index+1}'] = float(divergence_x_prior_draws)
+        metrics_dict[f'pqmass_post_{source_index+1}'] = float(pqmass_x_draws)
+        metrics_dict[f'pqmass_prior_{source_index+1}'] = float(pqmass_x_prior_draws)
+        metrics_dict[f'psnr_post_{source_index+1}'] = float(psnr_x_draws)
+        metrics_dict[f'psnr_prior_{source_index+1}'] = float(psnr_x_prior_draws)
 
     wandb.finish()
-    return metrics
+    return metrics_dict
 
 
 def main(_):
@@ -280,8 +280,8 @@ def main(_):
     print(f'Found devices {jax.devices()}')
     print(f'Working directory: {workdir}')
 
-    metrics=run_pcpca(config, workdir)
-    print(metrics)
+    metrics_dict = run_pcpca(config, workdir)
+    print(metrics_dict)
 
 
 if __name__ == '__main__':

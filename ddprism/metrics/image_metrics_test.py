@@ -6,7 +6,7 @@ import chex
 import jax
 import jax.numpy as jnp
 
-import metrics
+from ddprism.metrics import image_metrics as metrics
 
 
 class CNNTests(chex.TestCase):

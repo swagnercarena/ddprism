@@ -9,7 +9,6 @@ from jax import Array
 import jax.experimental.sparse
 import jax.numpy as jnp
 import numpy as np
-import ot
 
 from ddprism import diffusion
 from ddprism import sampling
@@ -220,64 +219,3 @@ def ppca(key: Array, x: Array, rank: int = 1) -> Tuple[Array, DPLR]:
     cov_x = DPLR(diagonal * jnp.ones(features), u_mat, u_mat.T)
 
     return mu_x, cov_x
-
-
-def sinkhorn_divergence(
-    u: Array, v: Array, lam: float = 1e-3, maxiter: int = 1024,
-    epsilon: float = 1e-2, enforce_positive: bool = False
-) -> float:
-    r"""Computes the Sinkhorn divergence between samples from two measures.
-
-    References:
-        Faster Wasserstein Distance Estimation with the Sinkhorn Divergence
-        (Chizat et al., 2020) https://arxiv.org/abs/2006.08172
-
-    Arguments:
-        u: Samples from the first measure.
-        v: Samples from the second measure.
-        lam: Regularization term of transport calculation.
-        maxiter: Maximum number of iterations to use for sinkhorn algorithm.
-        epsilon: Stop threshold on error for sinkhorn algorithm.
-        enforce_positive: Enforce that the returned sinkhole divergence is
-            positive despite being drawn from an estimator.
-
-    Returns:
-        Sinkhorn divergence between the two samples.
-    """
-    half_v = len(v) // 2
-    half_u = len(u) // 2
-
-    def transport(u, v):
-        # Use sinkhorn_log method for better performance with small epsilon.
-        return ot.sinkhorn2(
-            a=jnp.asarray(()), b=jnp.asarray(()), M=ot.dist(u, v),
-            reg=lam, numItermax=maxiter, stopThr=epsilon,
-            method='sinkhorn_log',
-        )
-
-    divergence = transport(u, v)
-    divergence -= transport(u[:half_u], u[-half_u:]) / 2.0
-    divergence -= transport(v[:half_v], v[-half_v:]) / 2.0
-
-    if enforce_positive:
-        divergence = jnp.maximum(divergence, 0.0)
-
-    return divergence
-
-
-def psnr(u: Array, v: Array, max_val: float=1, mean: bool=False) -> Array:
-    r"""Computes peak signal-to-noise ratio (PSNR) between the true signal u and the predicted signal v.
-
-    Arguments:
-        u: True signal.
-        v: Predicted signal. 
-        max_val: maximum possible value of the true signal.
-            
-    Returns:
-        psnr: peak signal to noise ratio of u and v.  The returned array has shape (*, ).
-    """
-    mse = jnp.mean((u - v)**2, axis=-1)
-    psnr = 20*jnp.log10(max_val / jnp.sqrt(mse))
-    if mean: 
-        psnr = psnr.mean()
-    return psnr

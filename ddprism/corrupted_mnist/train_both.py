@@ -22,7 +22,7 @@ from ddprism import training_utils
 from ddprism import utils
 
 import datasets
-import metrics
+from ddprism.metrics import image_metrics as metrics
 
 FLAGS = flags.FLAGS
 flags.DEFINE_string('workdir', None, 'working directory.')

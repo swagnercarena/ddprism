@@ -9,6 +9,8 @@ import jax
 import jax.numpy as jnp
 from jax import Array
 
+MAX_SPREAD = 4.0
+
 
 def generate_x(
     key: Array, n_samples: int, man_dim: int = 1, feat_dim: int = 3,
@@ -61,7 +63,7 @@ def generate_x(
 
     if normalize:
         x = (x - x.min(axis=0)) / (x.max(axis=0) - x.min(axis=0))
-        x = 4.0 * x - 2.0
+        x = MAX_SPREAD * x - MAX_SPREAD / 2.0
 
     return x
 

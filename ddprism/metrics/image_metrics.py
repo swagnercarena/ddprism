@@ -1,4 +1,4 @@
-"""Methods for evaluating image samples."""
+"""Metrics for evaluating image samples."""
 from typing import Sequence
 
 from flax import linen as nn
@@ -10,10 +10,10 @@ from kymatio.jax import Scattering2D
 import optax
 from orbax.checkpoint import CheckpointManager, CheckpointManagerOptions
 from orbax.checkpoint import PyTreeCheckpointer
-from pqm import pqm_chi2
 import scipy
 
 from ddprism.corrupted_mnist import datasets
+from ddprism.metrics.metrics import pq_mass
 
 class CNN(nn.Module):
     """A simple CNN model.
@@ -76,7 +76,9 @@ def _apply_model(state, images, labels):
     def loss_fn(params):
         logits = state.apply_fn({'params': params}, images)
         one_hot = jax.nn.one_hot(labels, 10)
-        loss = jnp.mean(optax.softmax_cross_entropy(logits=logits, labels=one_hot))
+        loss = jnp.mean(
+            optax.softmax_cross_entropy(logits=logits, labels=one_hot)
+        )
         return loss
 
     grad_fn = jax.value_and_grad(loss_fn)
@@ -88,7 +90,9 @@ def _update_model(state, grads):
     return state.apply_gradients(grads=grads)
 
 
-def train_mnist_classifier(rng, model, batch_size=512, num_epochs=30, learning_rate=1e-2, momentum=0.9):
+def train_mnist_classifier(
+    rng, model, batch_size=512, num_epochs=30, learning_rate=1e-2, momentum=0.9
+):
     """Train MNIST classifier for use with metrics.
 
     Arguments:
@@ -263,32 +267,12 @@ def inception_score_mnist(model, params, dist, batch_size=128) -> Array:
     return jnp.exp(kl)
 
 
-def pq_mass(dist_1, dist_2, **kwargs) -> Array:
-    r"""Computes PQMass chi squared values: https://arxiv.org/abs/2402.04355.
-
-    Arguments:
-        dist_1: Samples from the first distribution.
-        dist_2: Samples from the second distribution.
-        **kwargs: Additional arguments for computing PQMass.
-
-    Returns:
-        Mean chi-squared values from PQMass.
-
-    """
-    # Flatten outputs if not already flat.
-    dist_1 = dist_1.reshape(dist_1.shape[0], -1)
-    dist_2 = dist_2.reshape(dist_2.shape[0], -1)
-
-    chi2_vals = pqm_chi2(dist_1, dist_2, **kwargs)
-
-    return jnp.mean(chi2_vals)
-
-
 def compute_snr(signal: Array) -> Array:
     """Computes the signal-to-noise ratio of an image or signal.
 
     SNR is calculated as the ratio of the peak signal power to the variance of
-    the signal. For N-dimensional signals (N<=3), we compute this over all dimensions.
+    the signal. For N-dimensional signals (N<=3), we compute this over all
+    dimensions.
 
     Arguments:
         signal: Input signal with shape: (N, L), (N, H, W), or (N, H, W, C)

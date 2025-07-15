@@ -288,7 +288,9 @@ def calculate_posterior(
     Notes:
         See paper for derivation.
     """
-    weights, log_sigma = params['weights'], params['log_sigma'], params['mu_x'], params['mu_y']
+    weights, log_sigma, mu_x = (
+        params['weights'], params['log_sigma'], params['mu_x']
+    )
     sigma_sq = jnp.exp(2 * log_sigma)
 
     # First compute the covariance matrix.
@@ -299,7 +301,9 @@ def calculate_posterior(
         (1/sigma_sq) * a_mat.T @ a_mat + prior_precision
     )
 
+    y_residual = y_obs - jnp.matmul(a_mat, mu_x[..., None]).squeeze(-1)
+
     # Compute posterior mean
-    mean_post = sigma_post @ ( prior_precision @ mu_x + (1/sigma_sq) * a_mat.T @ y_obs)
+    mean_post = (1/sigma_sq) * sigma_post @ a_mat.T @ y_residual
 
     return mean_post, sigma_post

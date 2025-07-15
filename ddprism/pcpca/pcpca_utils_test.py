@@ -154,14 +154,15 @@ class PCPCAUtilsTests(chex.TestCase):
         signal_features = 4
         latent_dim = 3
 
-        rng_keys = jax.random.split(rng, 4)
+        rng_keys = jax.random.split(rng, 5)
 
         # Create parameters, observations, and transformation matrix
         weights = jax.random.normal(rng_keys[0], (signal_features, latent_dim))
-        log_sigma = jax.random.normal(rng_keys[1], ()) + 10
-        params = {'weights': weights, 'log_sigma': log_sigma}
-        y_obs = jax.random.normal(rng_keys[2], (obs_features,))
-        a_mat = jax.random.normal(rng_keys[3], (obs_features, signal_features))
+        log_sigma = jax.random.normal(rng_keys[1])
+        mu_x = jax.random.normal(rng_keys[2], (signal_features,))
+        params = {'weights': weights, 'log_sigma': log_sigma, 'mu_x': mu_x}
+        y_obs = jax.random.normal(rng_keys[3], (obs_features,))
+        a_mat = jax.random.normal(rng_keys[4], (obs_features, signal_features))
 
         apply_func = self.variant(pcpca_utils.calculate_posterior)
         mean_post, sigma_post = apply_func(params, y_obs, a_mat)
@@ -187,8 +188,9 @@ class PCPCAUtilsTests(chex.TestCase):
         params['weights'] = jax.random.normal(
             rng_keys[0], (obs_features, latent_dim)
         )
+        params['mu_x'] = jax.random.normal(rng_keys[2], (obs_features,))
         mean_post, sigma_post = apply_func(params, y_obs, a_mat)
-        self.assertTrue(jnp.allclose(mean_post, y_obs))
+        self.assertTrue(jnp.allclose(mean_post, y_obs - params['mu_x']))
         self.assertTrue(
             jnp.allclose(sigma_post, jnp.zeros((obs_features, obs_features)))
         )

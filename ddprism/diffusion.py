@@ -28,7 +28,7 @@ def matmul(matrix: Array, vector: Array) -> Array:
 
 def cg_batched(
     lin_transf: Callable[Array, Array], b: Array, maxiter: int = 50,
-    tol: float = 1e-6, safe_divide: float = 1e-32
+    tol: float = 1e-6, safe_divide: float = 1e-32, regularization: float = 0.0
 ) -> Array:
     """Batched implementation of conjugate gradient method for solving Ax=b.
 
@@ -37,13 +37,21 @@ def cg_batched(
         b: Right hand side of the linear system.
         maxiter: Maximum number of iterations of the CG method.
         tol: Tolerance for residual norm. Can be reached before maxiter.
+        safe_divide: Minimum value for safe division.
+        regularization: Regularization added to diagonal of linear system.
 
     Returns:
         Solution `x` to the equation Ax=b, where A is our linear transformation.
     """
+    # Apply regularization to the linear transformation.
+    if regularization > 0:
+        reg_lin_transf = lambda x: lin_transf(x) + regularization * x
+    else:
+        reg_lin_transf = lin_transf
+
     # Initial guess is zeros.
     x = jnp.zeros_like(b)
-    resid = b - lin_transf(x)
+    resid = b - reg_lin_transf(x)
     p_vec = resid
     r_norm = jnp.sum(resid * resid, axis=-1, keepdims=True)
 
@@ -74,7 +82,7 @@ def cg_batched(
     def cg_step(state):
         """Step of CG method."""
         k, x, resid, p_vec, r_norm = state
-        p_transf = lin_transf(p_vec)
+        p_transf = reg_lin_transf(p_vec)
 
         # Calculate the coefficient of the current conjugate vector.
         alpha_denom = jnp.sum(p_vec * p_transf, -1, keepdims=True)
@@ -344,6 +352,7 @@ class PosteriorDenoiserJoint(nn.Module):
     maxiter: int = 1
     use_dplr: bool = False
     safe_divide: float = 1e-32
+    regularization: float = 0.0
 
     @staticmethod
     def _select_mix_matrix(matrix: Array, index: int = None) -> Array:
@@ -517,7 +526,10 @@ class PosteriorDenoiserJoint(nn.Module):
 
         # Computes the score using conjugate gradient method.
         b = y.value - y_exp
-        v = cg_batched(cov_y_xt, b, self.maxiter, self.rtol, self.safe_divide)
+        v = cg_batched(
+            cov_y_xt, b, self.maxiter, self.rtol, self.safe_divide,
+            self.regularization
+        )
 
         cov_t_score = jnp.concat(
             [
@@ -545,6 +557,7 @@ class PosteriorDenoiserJointDiagonal(PosteriorDenoiserJoint):
             full matrix. Default is false.
         safe_divide: Minimum value allowed for denominators in division within
             conjugate gradient calculations.
+        regularization: Regularization added to diagonal of linear system.
 
     Notes:
         Unlike PosteriorDenoiserJoint, this implementation assumes that the A
@@ -655,7 +668,10 @@ class PosteriorDenoiserJointDiagonal(PosteriorDenoiserJoint):
 
         # Computes the score using conjugate gradient method.
         b = y.value - y_exp
-        v = cg_batched(cov_y_xt, b, self.maxiter, self.rtol, self.safe_divide)
+        v = cg_batched(
+            cov_y_xt, b, self.maxiter, self.rtol, self.safe_divide,
+            self.regularization
+        )
 
         cov_t_score = jnp.concat(
             [

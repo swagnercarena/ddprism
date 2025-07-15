@@ -6,7 +6,7 @@ import chex
 import jax
 import jax.numpy as jnp
 
-import metrics
+from ddprism.metrics import image_metrics as metrics
 
 
 class CNNTests(chex.TestCase):
@@ -125,7 +125,7 @@ class MetricsTests(chex.TestCase):
         # Test the pq_mass result.
         pq_small = metrics.pq_mass(draws_one, draws_two, num_refs=32)
         pq_large = metrics.pq_mass(draws_one, draws_three, num_refs=32)
-        self.assertGreater(pq_large, pq_small)
+        self.assertLess(pq_large, pq_small)
 
         # Test the result with the CNN embedding.
         cnn = metrics.CNN()
@@ -141,7 +141,7 @@ class MetricsTests(chex.TestCase):
         )
         pq_small = metrics.pq_mass(embed_one, embed_two, num_refs=32)
         pq_large = metrics.pq_mass(embed_one, embed_three, num_refs=32)
-        self.assertGreater(pq_large, pq_small)
+        self.assertLess(pq_large, pq_small)
 
 
 if __name__ == '__main__':

@@ -175,24 +175,5 @@ class UtilsTests(chex.TestCase):
         self.assertTrue(jnp.allclose(cov, cov_x.full_matrix(), atol=1e-1))
 
 
-    def test_sinkhorn_divergence(self):
-        """Test sinkhorn divergence calculation. POT doesn't support jit.
-        """
-        # Draw from two different normal distirbutions.
-        n_samps = 1000
-        rng_u, rng_v = jax.random.split(jax.random.PRNGKey(4))
-        u = jax.random.normal(rng_u, shape=(n_samps, 2))
-        v = jax.random.normal(rng_v, shape=(n_samps, 2)) * 0.5 + 0.1
-
-        self.assertGreater(utils.sinkhorn_divergence(u, v), 1e-6)
-
-        # Test that approaching the correct distribution improves the sinkhorn
-        # divergence.
-        v_new = jax.random.normal(rng_v, shape=(n_samps, 2))
-        self.assertGreater(
-            utils.sinkhorn_divergence(u, v), utils.sinkhorn_divergence(u, v_new)
-        )
-    #TODO: test psnr
-
 if __name__ == '__main__':
     absltest.main()

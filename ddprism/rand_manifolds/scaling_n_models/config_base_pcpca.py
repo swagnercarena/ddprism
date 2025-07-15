@@ -10,8 +10,9 @@ def get_config():
     config.gamma = 0.3
     config.latent_dim = 5
 
+
     # Optimization hyperparameters
-    config.n_iter = 100
+    config.n_iter = 10
     config.learning_rate = 1e-3
     config.lr_schedule = 'linear'
 

@@ -28,9 +28,9 @@ def get_config():
     config.post_rtol = 1e-6
     config.post_maxiter = 1
     config.post_use_dplr = True
-    config.post_safe_divide = 1e-10
-    config.post_regularization = 1e-10
-    config.post_error_threshold = 1e-3
+    config.post_safe_divide = 1e-2
+    config.post_regularization = 1e-2
+    config.post_error_threshold = 1e1
 
     # Training parameters.
     config.lr_init_val = 1e-5

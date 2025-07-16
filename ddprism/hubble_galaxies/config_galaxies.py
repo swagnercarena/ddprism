@@ -10,9 +10,9 @@ def get_config():
     config.dataset_size = 2048
 
     # Posterior parameters.
-    config.post_safe_divide = 1e-32
-    config.post_regularization = 0.0
-    config.post_error_threshold = 1e-3
+    config.post_safe_divide = 1e-2
+    config.post_regularization = 1e-2
+    config.post_error_threshold = 1e1
 
     # Sampling arguments
     config.sampling_kwargs = ConfigDict(

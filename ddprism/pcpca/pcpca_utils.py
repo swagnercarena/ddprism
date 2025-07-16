@@ -310,6 +310,7 @@ def calculate_posterior(
 
     return mean_post, sigma_post
 
+
 def mle_params(
     x_obs: jnp.ndarray, y_obs: jnp.ndarray, gamma: float, latent_dim: int,
     sigma: Optional[float] = None

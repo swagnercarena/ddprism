@@ -188,5 +188,63 @@ class PCPCAUtilsTests(chex.TestCase):
             jnp.allclose(sigma_post, jnp.zeros((obs_features, obs_features)))
         )
 
+    @chex.all_variants
+    def test_mle_params(self):
+        """Test that mle_params returns valid MLE parameters."""
+        rng = jax.random.PRNGKey(0)
+        rng_keys = jax.random.split(rng, 3)
+
+        # Create test data.
+        n_enr, n_bkg = 2000, 1900
+        data_dim = 4
+        latent_dim = 2
+        gamma = 0.1
+        weights = jax.random.normal(rng_keys[0], (data_dim, latent_dim))
+        weights_y = jax.random.normal(rng_keys[1], (data_dim, latent_dim))
+        x_obs = (
+            weights @ jax.random.normal(rng_keys[2], (n_enr, latent_dim, 1)) +
+            1.0
+        ).squeeze()
+        y_obs = (
+            weights_y @ jax.random.normal(rng_keys[3], (n_bkg, latent_dim, 1)) +
+            weights @ jax.random.normal(rng_keys[3], (n_bkg, latent_dim, 1))
+        ).squeeze()
+
+        apply_func = self.variant(
+            pcpca_utils.mle_params, static_argnames=['latent_dim','sigma']
+        )
+
+        # Test without providing sigma
+        params = apply_func(x_obs, y_obs, gamma, latent_dim)
+
+        # Check returned structure
+        expected_keys = {'mu', 'weights', 'log_sigma'}
+        self.assertSetEqual(set(params.keys()), expected_keys)
+
+        # Check shapes
+        self.assertTupleEqual(params['mu'].shape, (data_dim,))
+        self.assertTupleEqual(params['weights'].shape, (data_dim, latent_dim))
+        self.assertTupleEqual(params['log_sigma'].shape, ())
+
+        # Small gamma so the weights should roughly match.
+        self.assertTrue(
+            jnp.allclose(params['weights'], weights, atol=2e-1)
+        )
+        self.assertTrue(
+            jnp.allclose(params['mu'], jnp.ones(data_dim), atol=2e-1)
+        )
+
+        # Test with providing sigma
+        sigma_provided = 0.5
+        params_with_sigma = apply_func(
+            x_obs, y_obs, gamma, latent_dim, sigma_provided
+        )
+
+        # Check that log_sigma matches provided sigma
+        expected_log_sigma = jnp.log(sigma_provided)
+        self.assertAlmostEqual(
+            params_with_sigma['log_sigma'], expected_log_sigma, places=5
+        )
+
 if __name__ == '__main__':
     absltest.main()

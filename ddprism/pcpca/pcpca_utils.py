@@ -1,10 +1,8 @@
 """Utility functions for PCPCA."""
-from typing import Dict, Tuple
+from typing import Dict, Tuple, Optional
 
 import jax
 import jax.numpy as jnp
-from scipy.linalg import sqrtm
-import numpy as np
 
 
 def log_det_cholesky(
@@ -297,69 +295,83 @@ def calculate_posterior(
     )
     sigma_sq = jnp.exp(2 * log_sigma)
 
-
+    # Compute posterior covariance.
     prior_precision = jnp.linalg.inv(
         weights @ weights.T + regularization * jnp.eye(weights.shape[0])
     )
+    sigma_post = jnp.linalg.inv(
+        (1/sigma_sq) * a_mat.T @ a_mat + prior_precision
+    )
 
-    if a_mat is None:
-        # First compute the covariance matrix.
-        sigma_post = jnp.linalg.inv(
-        (1/sigma_sq) * jnp.eye(weights.shape[0]) + prior_precision
-        )
-
-        # Compute posterior mean
-        mean_post = sigma_post @ (
-            1 / sigma_sq * y_obs.T  + prior_precision @ mu[..., None]
-        )
-        
-    else:
-        sigma_post = jnp.linalg.inv(
-            (1/sigma_sq) * a_mat.T @ a_mat + prior_precision
-        )
-    
-        # Compute posterior mean
-        mean_post = sigma_post @ (
-            1 / sigma_sq * a_mat.T @ y_obs + prior_precision @ mu
-        )
+    # Compute posterior mean
+    mean_post = sigma_post @ (
+        1 / sigma_sq * a_mat.T @ y_obs + prior_precision @ mu
+    )
 
     return mean_post, sigma_post
 
-def mle_params(x, y, gamma, latent_dim, sigma=None):
-    data_dim = x.shape[1]
+def mle_params(
+    x_obs: jnp.ndarray, y_obs: jnp.ndarray, gamma: float, latent_dim: int,
+    sigma: Optional[float] = None
+):
+    """Compute the MLE parameters for the PCPCA model.
 
+    Args:
+        x_obs: Observed data with enriched signal.
+        y_obs: Observed data with only background signal.
+        gamma: Multiplier for contrastive term in loss function.
+        latent_dim: Dimension of the latent space.
+        sigma: Variance of the observation. Will be estimated if not provided.
+
+    Returns:
+        Dictionary with keys 'mu', 'weights', and 'log_sigma' containing the
+        MLE parameters for the PCPCA model.
+    """
+    # Get the data dimension for sigma optimization.
+    data_dim = x_obs.shape[1]
     if data_dim <= latent_dim:
-        raise ValueError("Latent space dimension should be less than the data dimension.")
+        raise ValueError(
+            "Latent space dimension should be less than or equal to the data "
+            "dimension."
+        )
 
     # Number of target and background samples.
-    n, m = x.shape[0], y.shape[0]
+    n_enr, n_bkg = x_obs.shape[0], y_obs.shape[0]
 
-    # Compute ML estimator of the mean of the target distribution with enriched signal.
-    mu_x = jnp.mean(x, axis=0)
-    x = x - mu_x
-    y = y - mu_x
-        
-    # Computes sample covariance matrix of the observed data.
-    C_x = x.T @ x / n
-    C_y = y.T @ y / m
+    # Compute ML estimator of the mean of the target distribution with enriched
+    # signal.
+    mu = (jnp.sum(x_obs, axis=0) - gamma * jnp.sum(y_obs, axis=0))
+    mu /= (n_enr - gamma * n_bkg)
+    x_residual = x_obs - mu
+    y_residual = y_obs - mu
 
-    C = n * C_x - gamma * m * C_y
+    # Compute unormalized "sample covariance" matrix of the observed data.
+    cov_x = x_residual.T @ x_residual
+    cov_y = y_residual.T @ y_residual
+    cov = cov_x - gamma * cov_y
 
-    # l_mat and q_mat are eigenvalues and eigenvectors of the covariance matrix in ascending order.
-    l_mat, q_mat = jnp.linalg.eigh(C)
-    # Sort the eigenvalues so that they are in descending order.
-    l_idx = jnp.argsort(-l_mat)
-    l_mat = l_mat[l_idx]
-    q_mat = q_mat[:, l_idx]
+    # Get the largest latent_dim eigenvalues and eigenvectors.
+    l_mat, q_mat = jnp.linalg.eigh(cov)
+    # Ensure eigenvalues are positive.
+    l_mat = jnp.maximum(l_mat, 1e-6)
+    l_mat_largest = l_mat[-latent_dim:]
+    q_mat_largest = q_mat[:, -latent_dim:]
 
-    Lambda = jnp.diag(l_mat[:latent_dim]) / (n - gamma * m)
+    # Get the normalized eigenvalues.
+    eig_values_largest = jnp.diag(l_mat_largest) / (n_enr - gamma * n_bkg)
 
-    # MLE for W and sigma^2
+    # Use MLE for sigma^2 if it is not provided.
     if sigma is not None:
         sigma2_mle = sigma ** 2
     else:
-        sigma2_mle = 1 / (data_dim - latent_dim)/ (n - gamma * m) * jnp.sum(l_mat[latent_dim:])
-    w_mle = q_mat[:, :latent_dim] @ jnp.sqrt(jnp.maximum(Lambda - sigma2_mle * jnp.eye(latent_dim), 0.0))
+        sigma2_mle = 1 / (data_dim - latent_dim) / (n_enr - gamma * n_bkg)
+        sigma2_mle *= jnp.sum(l_mat[:-latent_dim])
 
-    params = {'mu' : mu_x, 'weights' : w_mle, 'log_sigma': jnp.log(sigma2_mle) / 2}
-    return params
+    # Compute the MLE for the weights. Set negative eigenvalues to zero.
+    weights_mle = q_mat_largest @ jnp.sqrt(
+        jnp.maximum(eig_values_largest - sigma2_mle * jnp.eye(latent_dim), 0.0)
+    )
+
+    return {
+        'mu' : mu, 'weights' : weights_mle, 'log_sigma': jnp.log(sigma2_mle) / 2
+    }

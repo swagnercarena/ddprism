@@ -52,6 +52,109 @@ class SamplingTests(chex.TestCase):
 
     @chex.all_variants
     @parameterized.named_parameters(
+        [
+            ('_no_clipping', 'none'),
+            ('_value_clipping', 'value'),
+            ('_percentile_clipping', 'percentile'),
+            ('_std_dev_clipping', 'std_dev'),
+            ('_invalid_method', 'invalid_method')
+        ]
+    )
+    def test_apply_sample_clipping(self, clip_method):
+        """Test the _apply_sample_clipping function."""
+        rng = jax.random.PRNGKey(42)
+        batch_size = 32
+        features = 10
+
+        # Create samples with some extreme values
+        x = jax.random.normal(rng, shape=(batch_size, features))
+        t = jax.random.uniform(rng, shape=(batch_size, ))
+        x_with_outliers = x.at[0, 0].set(10.0)
+        x_with_outliers = x_with_outliers.at[1, 0].set(-10.0)
+
+        clip_fn = self.variant(
+            sampling._apply_sample_clipping, static_argnames=['clip_method']
+        )
+
+        if clip_method == 'none':
+            # No clipping - should return original samples
+            clipped = clip_fn(x_with_outliers, t, clip_method=clip_method)
+            self.assertTrue(jnp.allclose(clipped, x_with_outliers))
+        elif clip_method == 'value':
+            # Value clipping with clip_value=4.0
+            clipped = clip_fn(
+                x_with_outliers, t, clip_method=clip_method,
+                clip_value=4.0
+            )
+            self.assertTrue(jnp.all(jnp.abs(clipped) <= 4.0))
+            self.assertFalse(jnp.allclose(clipped, x_with_outliers))
+        elif clip_method == 'percentile':
+            # Percentile clipping
+            clipped = clip_fn(
+                x_with_outliers, t, clip_method=clip_method,
+                clip_percentile_low=5.0, clip_percentile_high=95.0
+            )
+            # Check that extreme values are clipped
+            self.assertTrue(jnp.all(jnp.abs(clipped) <= 4.0))
+            self.assertFalse(jnp.allclose(clipped, x_with_outliers))
+        elif clip_method == 'std_dev':
+            # Standard deviation clipping
+            clipped = clip_fn(
+                x_with_outliers, t, clip_method=clip_method,
+                clip_std_dev_threshold=2.0
+            )
+            # Check that extreme values are clipped
+            self.assertTrue(jnp.all(jnp.abs(clipped) <= 4.0))
+            self.assertFalse(jnp.allclose(clipped, x_with_outliers))
+        elif clip_method == 'invalid_method':
+            with self.assertRaises(ValueError):
+                _ = clip_fn(x_with_outliers, t, clip_method=clip_method)
+            return
+
+        # Check that shape is preserved
+        self.assertEqual(clipped.shape, x_with_outliers.shape)
+
+    @chex.all_variants
+    def test_adaptive_clipping(self):
+        """Test adaptive clipping functionality."""
+        rng = jax.random.PRNGKey(42)
+        batch_size = 32
+        features = 10
+
+        # Create samples with extreme values
+        x = jax.random.normal(rng, shape=(batch_size, features))
+        x_with_outliers = x.at[0, 0].set(10.0)
+        t = jnp.ones(batch_size)
+
+        clip_fn = self.variant(
+            sampling._apply_sample_clipping,
+            static_argnames=['clip_method', 'clip_adaptive']
+        )
+
+        clipped_early = clip_fn(
+            x_with_outliers, t, clip_method='value', clip_value=4.0,
+            clip_adaptive=True, clip_early_strength=0.5, clip_late_strength=1.0
+        )
+        self.assertEqual(jnp.max(clipped_early), 2.0)
+        clipped_late = clip_fn(
+            x_with_outliers, t * 0.0, clip_method='value', clip_value=4.0,
+            clip_adaptive=True, clip_early_strength=0.5, clip_late_strength=1.0
+        )
+        self.assertEqual(jnp.max(clipped_late), 4.0)
+
+        self.assertTrue(
+            jnp.all(jnp.abs(clipped_early) <= jnp.abs(clipped_late))
+        )
+
+        # Early clipping should be more aggressive (smaller effective clip_value)
+        # Late clipping should be less aggressive (larger effective clip_value)
+        early_max = jnp.max(jnp.abs(clipped_early))
+        late_max = jnp.max(jnp.abs(clipped_late))
+
+        self.assertLess(early_max, late_max)
+
+    @chex.all_variants
+    @parameterized.named_parameters(
         [(f'_diffusion_type_{dif}', dif) for dif in ['prior', 'posterior']]
     )
     def test_ddpm(self, dif):
@@ -109,7 +212,7 @@ class SamplingTests(chex.TestCase):
         state, params = _create_state_diffusion(rng_state, features, dif)
         n_models = 2 if dif == 'posterior' else 1
 
-        # Check that the DDIM step returns samples of correct shape.
+        # Check that the PC step returns samples of correct shape.
         xt = jax.random.normal(rng_x, shape=(batch_size, n_models * features))
         t = 0.6
         s = 0.5
@@ -164,7 +267,6 @@ class SamplingTests(chex.TestCase):
             _ = sampling_fn(
                 rng_step, state, params, xt, steps, sampler=sampler
             )
-
 
         # Check that the samplers returns different samples for initial times t.
         t = 0.6

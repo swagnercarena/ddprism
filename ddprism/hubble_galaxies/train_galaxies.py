@@ -19,7 +19,7 @@ import wandb
 from ddprism import diffusion
 from ddprism import training_utils
 from ddprism import utils
-from ddprism.corrupted_mnist import metrics
+from ddprism.metrics import image_metrics as metrics
 
 from build_parent_sample import NUMPIX
 import load_datasets

@@ -59,10 +59,20 @@ def get_config():
 
     # Sampling arguments
     config.sampling_kwargs = ConfigDict(
-        {'steps': 64, 'sampler': 'pc', 'corrections': 1, 'tau': 1e-2}
+        {
+            'steps': 64, 'sampler': 'pc', 'corrections': 1, 'tau': 1e-2,
+            'clip_method': 'value', 'clip_adaptive': True,
+            'clip_value': config.data_max, 'clip_early_strength': 0.5,
+            'clip_late_strength': 1.0
+        }
     )
     config.gaussian_sampling_kwargs = ConfigDict(
-        {'steps': 64, 'sampler': 'pc', 'corrections': 1, 'tau': 1e-2}
+        {
+            'steps': 64, 'sampler': 'pc', 'corrections': 1, 'tau': 1e-2,
+            'clip_method': 'value', 'clip_adaptive': True,
+            'clip_value': config.data_max, 'clip_early_strength': 0.5,
+            'clip_late_strength': 1.0
+        }
     )
     config.sample_batch_size = 16
 

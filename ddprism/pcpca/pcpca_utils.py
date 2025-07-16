@@ -3,6 +3,8 @@ from typing import Dict, Tuple
 
 import jax
 import jax.numpy as jnp
+from scipy.linalg import sqrtm
+import numpy as np
 
 
 def log_det_cholesky(
@@ -295,22 +297,35 @@ def calculate_posterior(
     )
     sigma_sq = jnp.exp(2 * log_sigma)
 
-    # First compute the covariance matrix.
+
     prior_precision = jnp.linalg.inv(
         weights @ weights.T + regularization * jnp.eye(weights.shape[0])
     )
-    sigma_post = jnp.linalg.inv(
-        (1/sigma_sq) * a_mat.T @ a_mat + prior_precision
-    )
 
-    # Compute posterior mean
-    mean_post = sigma_post @ (
-        1 / sigma_sq * a_mat.T @ y_obs + prior_precision @ mu
-    )
+    if a_mat is None:
+        # First compute the covariance matrix.
+        sigma_post = jnp.linalg.inv(
+        (1/sigma_sq) * jnp.eye(weights.shape[0]) + prior_precision
+        )
+
+        # Compute posterior mean
+        mean_post = sigma_post @ (
+            1 / sigma_sq * y_obs.T  + prior_precision @ mu[..., None]
+        )
+        
+    else:
+        sigma_post = jnp.linalg.inv(
+            (1/sigma_sq) * a_mat.T @ a_mat + prior_precision
+        )
+    
+        # Compute posterior mean
+        mean_post = sigma_post @ (
+            1 / sigma_sq * a_mat.T @ y_obs + prior_precision @ mu
+        )
 
     return mean_post, sigma_post
 
-def mle_params(x, y, gamma, latent_dim, sigma=None,):
+def mle_params(x, y, gamma, latent_dim, sigma=None):
     data_dim = x.shape[1]
 
     if data_dim <= latent_dim:
@@ -323,16 +338,16 @@ def mle_params(x, y, gamma, latent_dim, sigma=None,):
     mu_x = jnp.mean(x, axis=0)
     x = x - mu_x
     y = y - mu_x
-
+        
     # Computes sample covariance matrix of the observed data.
     C_x = x.T @ x / n
     C_y = y.T @ y / m
 
     C = n * C_x - gamma * m * C_y
 
-    # l_mat are the n=rank largest eigenvalues of the covariance matrix.
-    # q_mat are the eigevectors corresponding to l_mat.
+    # l_mat and q_mat are eigenvalues and eigenvectors of the covariance matrix in ascending order.
     l_mat, q_mat = jnp.linalg.eigh(C)
+    # Sort the eigenvalues so that they are in descending order.
     l_idx = jnp.argsort(-l_mat)
     l_mat = l_mat[l_idx]
     q_mat = q_mat[:, l_idx]
@@ -344,7 +359,7 @@ def mle_params(x, y, gamma, latent_dim, sigma=None,):
         sigma2_mle = sigma ** 2
     else:
         sigma2_mle = 1 / (data_dim - latent_dim)/ (n - gamma * m) * jnp.sum(l_mat[latent_dim:])
-    w_mle = q_mat[:latent_dim].T @ jnp.sqrt(jnp.maximum(Lambda - sigma2_mle * jnp.eye(latent_dim), 0.0))
+    w_mle = q_mat[:, :latent_dim] @ jnp.sqrt(jnp.maximum(Lambda - sigma2_mle * jnp.eye(latent_dim), 0.0))
 
     params = {'mu' : mu_x, 'weights' : w_mle, 'log_sigma': jnp.log(sigma2_mle) / 2}
     return params

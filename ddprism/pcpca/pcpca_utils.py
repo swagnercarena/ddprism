@@ -23,13 +23,13 @@ def log_det_cholesky(
     # Cholesky decomposition and validity.
     chol = jnp.linalg.cholesky(regularized_matrix)
     chol_valid = jnp.all(jnp.isfinite(chol))
-    
+
     # If Cholesky succeeded, use it; otherwise fallback to SVD
     def cholesky_logdet():
-        return 2.0 * jnp.sum(jnp.log(jnp.diag(chol)))
+        return 2.0 * jnp.sum(jnp.log(jnp.diag(chol))) + regularization
     def logdet():
         return jnp.log(jnp.linalg.det(regularized_matrix) +  regularization)
-    return logdet() #jnp.where(chol_valid, cholesky_logdet(), logdet())
+    return jnp.where(chol_valid, cholesky_logdet(), logdet())
 
 
 def stable_solve(
@@ -101,12 +101,9 @@ def loss(
     )
 
     # Loss terms from the enriched signal.
-    loss_value = 0.
-    '''
     loss_value = - 0.5 * jnp.mean(
         jax.vmap(log_det_cholesky, in_axes=(0, None))(c_mat, regularization)
     )
-    '''
     x_residual = x_obs - jnp.matmul(x_a_mat, mu[..., None]).squeeze(-1)
     loss_value += -0.5 * jnp.mean(
         jax.vmap(stable_quadratic, in_axes=(0, 0, None))(
@@ -119,14 +116,14 @@ def loss(
     loss_value += 0.5 * gamma * jnp.mean(
         jax.vmap(log_det_cholesky, in_axes=(0, None))(d_mat, regularization)
     )
-    
+
     y_residual = y_obs - jnp.matmul(y_a_mat, mu[..., None]).squeeze(-1)
     loss_value += 0.5 * gamma * jnp.mean(
         jax.vmap(stable_quadratic, in_axes=(0, 0, None))(
             d_mat, y_residual, regularization
         )
     )
-    
+
     return loss_value
 
 
@@ -315,18 +312,18 @@ def calculate_posterior(
 
 def mle_params(x, y, gamma, latent_dim, sigma=None,):
     data_dim = x.shape[1]
-    
+
     if data_dim <= latent_dim:
         raise ValueError("Latent space dimension should be less than the data dimension.")
 
     # Number of target and background samples.
     n, m = x.shape[0], y.shape[0]
-    
+
     # Compute ML estimator of the mean of the target distribution with enriched signal.
-    mu_x = jnp.mean(x, axis=0) 
+    mu_x = jnp.mean(x, axis=0)
     x = x - mu_x
     y = y - mu_x
-    
+
     # Computes sample covariance matrix of the observed data.
     C_x = x.T @ x / n
     C_y = y.T @ y / m
@@ -339,9 +336,9 @@ def mle_params(x, y, gamma, latent_dim, sigma=None,):
     l_idx = jnp.argsort(-l_mat)
     l_mat = l_mat[l_idx]
     q_mat = q_mat[:, l_idx]
-    
+
     Lambda = jnp.diag(l_mat[:latent_dim]) / (n - gamma * m)
-    
+
     # MLE for W and sigma^2
     if sigma is not None:
         sigma2_mle = sigma ** 2

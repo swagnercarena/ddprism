@@ -123,7 +123,7 @@ def cg_batched(
 def cg_batched_adaptive(
     lin_transf: Callable[[Array], Array], b: Array, maxiter: int = 50,
     tol: float = 1e-6, safe_divide: float = 1e-32, regularization: float = 0.0,
-    error_threshold: float = 1e-3
+    error_threshold: Optional[float] = 1e-3
 ) -> Array:
     """Batched CG with adaptive regularization based on error.
 
@@ -137,18 +137,25 @@ def cg_batched_adaptive(
         tol: Tolerance for residual norm. Can be reached before maxiter.
         safe_divide: Minimum value for safe division.
         regularization: Regularization added to diagonal of linear system.
-        error_threshold: Threshold for considering an error "large".
+        error_threshold: Threshold for considering an error "large". If None,
+            always apply regularization (skips unregularized solve).
 
     Returns:
         Solution `x` to the equation Ax=b, where A is our linear transformation.
     """
+    # If error_threshold is None, never use regularization.
+    if error_threshold is None:
+        return cg_batched(
+            lin_transf, b, maxiter, tol, safe_divide=1e-32, regularization=0.0
+        )
+
     # First attempt without regularization
     x_no_reg, residual_norm = cg_batched(
         lin_transf, b, maxiter, tol, safe_divide=1e-32, regularization=0.0,
         return_residual=True
     )
     x_reg = cg_batched(
-        lin_transf, b, maxiter, tol, safe_divide, regularization,
+        lin_transf, b, maxiter, tol, safe_divide, regularization
     )
 
     # Check which elements have large errors and use regularization for them.
@@ -398,7 +405,7 @@ class PosteriorDenoiserJoint(nn.Module):
     use_dplr: bool = False
     safe_divide: float = 1e-32
     regularization: float = 0.0
-    error_threshold: float = 1e-3
+    error_threshold: Optional[float] = None
 
     @staticmethod
     def _select_mix_matrix(matrix: Array, index: Optional[int] = None) -> Array:

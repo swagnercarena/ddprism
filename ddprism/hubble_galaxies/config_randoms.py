@@ -28,8 +28,8 @@ def get_config():
     config.post_rtol = 1e-6
     config.post_maxiter = 1
     config.post_use_dplr = True
-    config.post_safe_divide = 1e-32
-    config.post_regularization = 0.0
+    config.post_safe_divide = 1e-10
+    config.post_regularization = 1e-10
     config.post_error_threshold = 1e-3
 
     # Training parameters.

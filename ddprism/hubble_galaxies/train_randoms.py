@@ -91,7 +91,7 @@ def create_posterior_train_state(
         use_dplr=config.post_use_dplr,
         safe_divide=config.get('post_safe_divide', 1e-32),
         regularization=config.get('post_regularization', 0.0),
-        error_threshold=config.get('post_error_threshold', 1e-3)
+        error_threshold=config.get('post_error_threshold', None)
     )
 
     # Initialize posterior denoiser.

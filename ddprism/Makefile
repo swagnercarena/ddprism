@@ -1,6 +1,6 @@
 # —————— Configuration ——————
 PYTHON       ?= python3
-TEST_PATTERN ?= '*_test.py'
+TEST_PATTERN ?= '**_test.py'
 
 # —————— Targets ——————
 .PHONY: test clean

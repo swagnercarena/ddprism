@@ -20,7 +20,7 @@ def get_config():
     config.hid_channels = (64, 128, 256, 256, 512)
     config.hid_blocks = (2, 2, 2, 2, 2)
     config.kernel_size = (3, 3)
-    config.emb_features = 64
+    config.emb_features = 128
     config.heads = {'2': 4, '3': 8, '4': 16}
     config.dropout_rate = 0.1
 

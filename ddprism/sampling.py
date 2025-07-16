@@ -354,8 +354,8 @@ def _step_pc_edm(
 def _apply_sample_clipping(
     x: Array, t: Array, clip_method: Optional[str] = 'none',
     clip_adaptive: Optional[bool] = False, clip_value: Optional[float] = 4.0,
-    clip_early_strength: Optional[float] = 0.5,
-    clip_late_strength: Optional[float] = 1.0,
+    clip_early_scaling: Optional[float] = 0.5,
+    clip_late_scaling: Optional[float] = 1.0,
     clip_percentile_low: Optional[float] = 0.1,
     clip_percentile_high: Optional[float] = 99.9,
     clip_std_dev_threshold: Optional[float] = 4.0, **kwargs
@@ -369,18 +369,19 @@ def _apply_sample_clipping(
             'percentile', and 'std_dev'.
         clip_adaptive: Whether to use adaptive clipping.
         clip_value: Value to clip to for value clipping.
-        clip_early_strength: Strength of clipping early in sampling.
-        clip_late_strength: Strength of clipping late in sampling.
+        clip_early_scaling: Scaling of clipping early in sampling.
+        clip_late_scaling: Scaling of clipping late in sampling.
         clip_percentile_low: Lower percentile to clip to.
         clip_percentile_high: Upper percentile to clip to.
+        clip_std_dev_threshold: Number of standard deviations to clip to.
 
     Returns:
         Clipped samples.
     """
     # Always calculate the adaptive factor, jit will throw away if not used.
     adaptive_factor = (
-        clip_early_strength +
-        (clip_late_strength - clip_early_strength) * (1 - t)
+        clip_early_scaling +
+        (clip_late_scaling - clip_early_scaling) * (1 - t)
     )[:, None]
 
     if clip_method == 'none':

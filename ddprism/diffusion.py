@@ -28,8 +28,9 @@ def matmul(matrix: Array, vector: Array) -> Array:
 
 def cg_batched(
     lin_transf: Callable[Array, Array], b: Array, maxiter: int = 50,
-    tol: float = 1e-6, safe_divide: float = 1e-32, regularization: float = 0.0
-) -> Array:
+    tol: float = 1e-6, safe_divide: float = 1e-32, regularization: float = 0.0,
+    return_residual: bool = False
+) -> Array | tuple[Array, Array]:
     """Batched implementation of conjugate gradient method for solving Ax=b.
 
     Arguments:
@@ -39,9 +40,11 @@ def cg_batched(
         tol: Tolerance for residual norm. Can be reached before maxiter.
         safe_divide: Minimum value for safe division.
         regularization: Regularization added to diagonal of linear system.
+        return_residual: If True, return both solution and final residual norm.
 
     Returns:
         Solution `x` to the equation Ax=b, where A is our linear transformation.
+        If return_residual is True, returns (x, residual_norm).
     """
     # Apply regularization to the linear transformation.
     if regularization > 0:
@@ -64,7 +67,7 @@ def cg_batched(
 
 
     def _safe_divide(
-        numerator: Array, denominator: Array, floor: Optional[float] = 1e-32
+        numerator: Array, denominator: Array, floor: float = 1e-32
     ) -> Array:
         """Safe division to avoid floating point errors causing overflow.
 
@@ -108,9 +111,51 @@ def cg_batched(
 
     # Run the cg method until convergence or max iterations.
     k = 0
-    _, x, *_ = jax.lax.while_loop(cond, cg_step, (k, x, resid, p_vec, r_norm))
+    _, x, _, _, r_norm_final = jax.lax.while_loop(
+        cond, cg_step, (k, x, resid, p_vec, r_norm)
+    )
 
+    if return_residual:
+        return x, jnp.sqrt(r_norm_final)
     return x
+
+
+def cg_batched_adaptive(
+    lin_transf: Callable[[Array], Array], b: Array, maxiter: int = 50,
+    tol: float = 1e-6, safe_divide: float = 1e-32, regularization: float = 0.0,
+    error_threshold: float = 1e-3
+) -> Array:
+    """Batched CG with adaptive regularization based on error.
+
+    First attempts to solve without regularization. For elements with large
+    errors, rerun with regularization.
+
+    Arguments:
+        lin_transf: Linear transformation of a vector.
+        b: Right hand side of the linear system.
+        maxiter: Maximum number of iterations of the CG method.
+        tol: Tolerance for residual norm. Can be reached before maxiter.
+        safe_divide: Minimum value for safe division.
+        regularization: Regularization added to diagonal of linear system.
+        error_threshold: Threshold for considering an error "large".
+
+    Returns:
+        Solution `x` to the equation Ax=b, where A is our linear transformation.
+    """
+    # First attempt without regularization
+    x_no_reg, residual_norm = cg_batched(
+        lin_transf, b, maxiter, tol, safe_divide=1e-32, regularization=0.0,
+        return_residual=True
+    )
+    x_reg = cg_batched(
+        lin_transf, b, maxiter, tol, safe_divide, regularization,
+    )
+
+    # Check which elements have large errors and use regularization for them.
+    large_error_mask = residual_norm > error_threshold
+    x_final = jnp.where(large_error_mask, x_reg, x_no_reg)
+
+    return x_final
 
 
 class VESDE(nn.Module):
@@ -353,9 +398,10 @@ class PosteriorDenoiserJoint(nn.Module):
     use_dplr: bool = False
     safe_divide: float = 1e-32
     regularization: float = 0.0
+    error_threshold: float = 1e-3
 
     @staticmethod
-    def _select_mix_matrix(matrix: Array, index: int = None) -> Array:
+    def _select_mix_matrix(matrix: Array, index: Optional[int] = None) -> Array:
         """Return mixing matrix with index selections.
 
         Arguments:
@@ -370,7 +416,9 @@ class PosteriorDenoiserJoint(nn.Module):
             return matrix
         return matrix[..., index:index+1, :, :]
 
-    def denoiser_models_idx(self, index: int = None) -> Sequence[nn.Module]:
+    def denoiser_models_idx(
+        self, index: Optional[int] = None
+    ) -> Sequence[nn.Module]:
         """Return denoiser_models with index selection.
 
         Arguments:
@@ -384,7 +432,7 @@ class PosteriorDenoiserJoint(nn.Module):
             return self.denoiser_models
         return self.denoiser_models[index:index+1]
 
-    def n_models(self, index: int = None) -> int:
+    def n_models(self, index: Optional[int] = None) -> int:
         """Return the number of model in the joint posterior.
 
         Arguments:
@@ -526,9 +574,9 @@ class PosteriorDenoiserJoint(nn.Module):
 
         # Computes the score using conjugate gradient method.
         b = y.value - y_exp
-        v = cg_batched(
+        v = cg_batched_adaptive(
             cov_y_xt, b, self.maxiter, self.rtol, self.safe_divide,
-            self.regularization
+            self.regularization, self.error_threshold
         )
 
         cov_t_score = jnp.concat(
@@ -668,9 +716,9 @@ class PosteriorDenoiserJointDiagonal(PosteriorDenoiserJoint):
 
         # Computes the score using conjugate gradient method.
         b = y.value - y_exp
-        v = cg_batched(
+        v = cg_batched_adaptive(
             cov_y_xt, b, self.maxiter, self.rtol, self.safe_divide,
-            self.regularization
+            self.regularization, self.error_threshold
         )
 
         cov_t_score = jnp.concat(

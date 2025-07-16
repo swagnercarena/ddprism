@@ -133,12 +133,12 @@ class SamplingTests(chex.TestCase):
 
         clipped_early = clip_fn(
             x_with_outliers, t, clip_method='value', clip_value=4.0,
-            clip_adaptive=True, clip_early_strength=0.5, clip_late_strength=1.0
+            clip_adaptive=True, clip_early_scaling=0.5, clip_late_scaling=1.0
         )
         self.assertEqual(jnp.max(clipped_early), 2.0)
         clipped_late = clip_fn(
             x_with_outliers, t * 0.0, clip_method='value', clip_value=4.0,
-            clip_adaptive=True, clip_early_strength=0.5, clip_late_strength=1.0
+            clip_adaptive=True, clip_early_scaling=0.5, clip_late_scaling=1.0
         )
         self.assertEqual(jnp.max(clipped_late), 4.0)
 

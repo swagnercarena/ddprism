@@ -20,7 +20,7 @@ def get_config():
     config.hid_channels = (64, 128, 256, 256, 512)
     config.hid_blocks = (2, 2, 2, 2, 2)
     config.kernel_size = (3, 3)
-    config.emb_features = 128
+    config.emb_features = 64
     config.heads = {'2': 4, '3': 8, '4': 16}
     config.dropout_rate = 0.1
 
@@ -28,8 +28,8 @@ def get_config():
     config.post_rtol = 1e-6
     config.post_maxiter = 1
     config.post_use_dplr = True
-    config.post_safe_divide = 1e-6
-    config.post_regularization = 1e-6
+    config.post_safe_divide = 1e-2
+    config.post_regularization = 1e-2
     config.post_error_threshold = 1e1
 
     # Training parameters.

@@ -62,7 +62,7 @@ def sampling(
     # performance.
     t0 = jnp.zeros(x0.shape[:-1])
     return _apply_sample_clipping(
-        state.apply_fn(params, x0, t0, train=False), 0.0, **kwargs
+        state.apply_fn(params, x0, t0, train=False), t0, **kwargs
     )
 
 
@@ -216,8 +216,11 @@ def _step_pc(
 
     # Function for scan.
     def correction_step(xs, key_corr):
-        corrected = _correct(key_corr, state, params, xs, s, tau, tau_min, alpha)
-        return _apply_sample_clipping(corrected, s, **kwargs), None
+        return (
+            _correct(
+                key_corr, state, params, xs, s, tau, tau_min, alpha, **kwargs
+            ), None
+        )
 
     # Apply corrections.
     keys = jax.random.split(key, corrections)
@@ -228,7 +231,7 @@ def _step_pc(
 def _correct(
     key: Array, state: TrainState, params: Dict[str, Array],
     xt: Array, t: float, tau: Array,
-    tau_min: Array, alpha: Array
+    tau_min: Array, alpha: Array, **kwargs
 ) -> Array:
     """ Correct the prediction using LMC.
 
@@ -238,7 +241,6 @@ def _correct(
         params: Params to use with the TrainState.
         xt: Current xt samples. Shape (*, n_models, features).
         t: Time of current samples.
-        s: Next time index for SDE sampling.
         corrections: Number of corrections to apply after predictor.
         tau: Step size scaling for correction.
         tau_min: Minimum step size scaling for correction.
@@ -262,7 +264,8 @@ def _correct(
     e_x_t = state.apply_fn(params, xt, t, train=False)
 
     eps = jax.random.normal(key, xt.shape)
-    return xt - tau * (xt - e_x_t) + sigma_t * jnp.sqrt(2 * tau) * eps
+    xt_new = xt - tau * (xt - e_x_t) + sigma_t * jnp.sqrt(2 * tau) * eps
+    return _apply_sample_clipping(xt_new, t, **kwargs)
 
 
 def _step_edm(
@@ -307,14 +310,14 @@ def _step_edm(
     # Evaluate x at the time step s with the second-order correction.
     d_s = (xs - e_x_s) / sigma_s
     xs = xt + (sigma_s - sigma_t) * (1/2) * (d_t + d_s)
-    return xs
+    return _apply_sample_clipping(xs, s, **kwargs)
 
 def _step_pc_edm(
     key: Array, state: TrainState, params: Dict[str, Array], xt: Array,
     t: float, s: float, corrections: int = 1, tau: Array = 1e-1,
     tau_min: Array = 1e-1, alpha: Array = 0, **kwargs
 ) -> Array:
-    """ Take on step of the predictor-corrector sampler with edm replacing ddim.
+    """Take on step of the predictor-corrector sampler with edm replacing ddim.
 
     Arguments:
         key: Jax PRNG key.
@@ -331,12 +334,14 @@ def _step_pc_edm(
     """
     tau = jnp.asarray(tau)
 
-    xs = _step_edm(key, state, params, xt, t, s)
+    xs = _step_edm(key, state, params, xt, t, s, **kwargs)
 
     # Function for scan.
     def correction_step(xs, key_corr):
         return (
-            _correct(key_corr, state, params, xs, s, tau, tau_min, alpha), None
+            _correct(
+                key_corr, state, params, xs, s, tau, tau_min, alpha, **kwargs
+            ), None
         )
 
     # Apply corrections.
@@ -347,7 +352,7 @@ def _step_pc_edm(
 
 
 def _apply_sample_clipping(
-    x: Array, t: float, clip_method: Optional[str] = 'none',
+    x: Array, t: Array, clip_method: Optional[str] = 'none',
     clip_adaptive: Optional[bool] = False, clip_value: Optional[float] = 4.0,
     clip_early_strength: Optional[float] = 0.5,
     clip_late_strength: Optional[float] = 1.0,
@@ -359,7 +364,7 @@ def _apply_sample_clipping(
 
     Arguments:
         x: Samples to clip. Shape (*, features)
-        t: Current time step (0 to 1, where 1 is pure noise)
+        t: Current time step (0 to 1, where 1 is pure noise). Shape (*).
         clip_method: Type of clipping to apply. Options are 'none', 'value',
             'percentile', and 'std_dev'.
         clip_adaptive: Whether to use adaptive clipping.
@@ -376,7 +381,7 @@ def _apply_sample_clipping(
     adaptive_factor = (
         clip_early_strength +
         (clip_late_strength - clip_early_strength) * (1 - t)
-    )
+    )[:, None]
 
     if clip_method == 'none':
         return x

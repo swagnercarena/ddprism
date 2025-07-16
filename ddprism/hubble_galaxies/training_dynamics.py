@@ -45,7 +45,7 @@ def get_dynamic_sampling_kwargs(base_kwargs, lap, total_laps):
     Returns:
         Sampling kwargs with number of steps modified for current lap.
     """
-    dynamic_kwargs = base_kwargs.copy()
+    dynamic_kwargs = base_kwargs.copy_and_resolve_references()
     dynamic_kwargs['steps'] = compute_dynamic_sampling_steps(
         lap, base_kwargs['steps'], total_laps
     )

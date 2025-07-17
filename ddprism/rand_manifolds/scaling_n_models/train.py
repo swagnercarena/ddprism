@@ -135,14 +135,17 @@ def create_posterior_train_state_joint(
 sample = jax.jit( # pylint: disable=invalid-name
     utils.sample,
     static_argnames=[
-        'sample_shape', 'feature_shape', 'steps','sampler','corrections'
+        'sample_shape', 'feature_shape', 'steps', 'sampler', 'corrections',
+        'clip_method'
     ],
 )
 
 
 sample_gibbs = jax.jit( # pylint: disable=invalid-name
     utils.sample_gibbs,
-    static_argnames=['steps','sampler','corrections','gibbs_rounds'],
+    static_argnames=[
+        'steps', 'sampler', 'corrections', 'gibbs_rounds', 'clip_method'
+    ],
 )
 
 

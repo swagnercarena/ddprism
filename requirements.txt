@@ -8,6 +8,7 @@ optax
 orbax
 orbax-checkpoint
 POT
+seaborn
 tqdm
 wandb
 

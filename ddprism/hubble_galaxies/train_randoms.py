@@ -118,6 +118,7 @@ def main(_):
     config = FLAGS.config
     workdir = FLAGS.workdir
     rng = jax.random.PRNGKey(config.rng_key)
+    use_dynamic = config.get('use_dynamic', True)
     os.makedirs(workdir, exist_ok=True)
 
     print(f'Found devices {jax.local_devices()}')
@@ -278,10 +279,10 @@ def main(_):
     for lap in tqdm(range(config.em_laps), desc='EM Lap'):
         # Compute dynamic parameters for this lap
         dynamic_epochs = training_dynamics.compute_dynamic_epochs(
-            lap, config.epochs, config.em_laps
+            lap, config.epochs, config.em_laps, use_dynamic
         )
         dynamic_sampling_kwargs = training_dynamics.get_dynamic_sampling_kwargs(
-            config.sampling_kwargs, lap, config.em_laps
+            config.sampling_kwargs, lap, config.em_laps, use_dynamic
         )
 
         # Create sampling function with dynamic parameters for this lap. Delete

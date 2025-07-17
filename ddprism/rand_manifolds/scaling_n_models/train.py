@@ -282,9 +282,11 @@ def main(_):
     # Set up wandb logging and checkpointing. Use sweep if SWEEP_ID is set.
     if os.environ.get('WANDB_SWEEP_ID') is not None:
         # Don't pass config to wandb.init() if running as part of a sweep
-    # to avoid overwriting sweep parameters
+        # to avoid overwriting sweep parameters
+        print('Running as part of a sweep.')
         wandb.init()
         config = update_config_with_sweep(config)
+        print(f'Updated config with sweep parameters: {dict(config)}')
     else:
         # Normal run - pass our config to wandb
         wandb.init(

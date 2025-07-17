@@ -63,6 +63,8 @@ def get_config():
     )
     config.sample_batch_size = 128
     config.pq_mass_samples = 8192
+    config.psnr_samples = 8192
+    config.MAX_SPREAD = 1
 
     # wandb parameters
     config.wandb_kwargs = ConfigDict(

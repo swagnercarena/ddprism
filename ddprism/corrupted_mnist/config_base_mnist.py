@@ -1,5 +1,5 @@
 """Basic configuration for the variable mixing matrix problem."""
-import config_base_grass
+from . import config_base_grass
 
 
 def get_config():

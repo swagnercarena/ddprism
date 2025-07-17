@@ -6,8 +6,8 @@ metric:
 parameters:
   lr_init_val:
     distribution: log_uniform_values
-    min: 1e-5
-    max: 1e-2
+    min: 0.00001
+    max: 0.01
   epochs:
     values: [8192, 16384, 32768, 65536]
   gaussian_em_laps:
@@ -20,12 +20,12 @@ parameters:
       - [16, 96, 192]
   sde.a:
     distribution: log_uniform_values
-    min: 1e-4
-    max: 1e-2
+    min: 0.0001
+    max: 0.01
   sde.b:
     distribution: log_uniform_values
-    min: 1e0
-    max: 1e2
+    min: 1.0
+    max: 100.0
   hidden_features:
     values:
       - [128, 128, 128]
@@ -38,7 +38,7 @@ parameters:
     values: [256, 1024, 4096, 16384]
   sampling_kwargs.tau:
     distribution: log_uniform_values
-    min: 1e-3
-    max: 1e-1
+    min: 0.001
+    max: 0.1
   post_error_threshold:
     values: [1e-1, 1e0, 1e1]

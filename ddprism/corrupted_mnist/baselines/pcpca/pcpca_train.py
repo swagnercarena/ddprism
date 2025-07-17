@@ -87,7 +87,10 @@ def get_prior_samples(rng, params, num_samples, latent_dim, feat_dim, bkg, mnist
     return prior_samples
 
 
-def run_pcpca(config_mnist, config_grass, config_pcpca, workdir):
+def run_pcpca(config_pcpca, workdir):
+    config_mnist = config_pcpca.config_mnist
+    config_grass = config_pcpca.config_grass
+    
     # RNG key from config.
     rng = jax.random.key(config_mnist.rng_key)
     
@@ -242,6 +245,23 @@ def run_pcpca(config_mnist, config_grass, config_pcpca, workdir):
             {'pqmass_prior': pqmass_prior}, commit=False
     )
 
+    # Compute Sinkhorn divegence.
+    divergence_post = metrics.sinkhorn_divergence(
+        post_samples.reshape(post_samples.shape[0], -1)[:config_mnist.sinkhorn_div_samples],
+        x_uncorrupted.reshape(x_uncorrupted.shape[0], -1)[:config_mnist.sinkhorn_div_samples]
+    )
+    wandb.log(
+        {f'div_post': divergence_post}, commit=False
+    )
+
+    divergence_prior = metrics.sinkhorn_divergence(
+        prior_samples.reshape(prior_samples.shape[0], -1)[:config_mnist.sinkhorn_div_samples],
+        x_uncorrupted.reshape(x_uncorrupted.shape[0], -1)[:config_mnist.sinkhorn_div_samples]
+    )
+    wandb.log(
+        {f'div_prior': divergence_prior}, commit=False
+    )
+    
     # Save parameters to a checkpoint.
     checkpointer = PyTreeCheckpointer()
     checkpoint_options = CheckpointManagerOptions(
@@ -254,7 +274,7 @@ def run_pcpca(config_mnist, config_grass, config_pcpca, workdir):
     checkpoint_manager.save(0, params)
     checkpoint_manager.close()
     
-    # Record performance metrics (FCD, PSNR, PQMass).
+    # Record performance metrics (FCD, PSNR, PQMass, Sinkhorn divergence).
     metrics_dict['fcd_post'] = float(fcd_post)
     metrics_dict['fcd_prior'] = float(fcd_prior)
     
@@ -264,6 +284,9 @@ def run_pcpca(config_mnist, config_grass, config_pcpca, workdir):
     metrics_dict['pqmass_post'] = float(pqmass_post)
     metrics_dict['pqmass_prior'] = float(pqmass_prior)
 
+    metrics_dict['div_post']  = float(divergence_post)
+    metrics_dict['div_prior'] = float(divergence_prior)
+
     wandb.finish()
     return metrics_dict
 
@@ -272,8 +295,6 @@ def main(_):
     """Find best PCPCA parameters for each source by minimizing PCPCA loss function."""
     
     config_pcpca = FLAGS.config_pcpca
-    config_mnist = config_pcpca.config_mnist
-    config_grass = config_pcpca.config_grass
 
     workdir = FLAGS.workdir
     os.makedirs(workdir, exist_ok=True)
@@ -281,7 +302,7 @@ def main(_):
     print(f'Found devices {jax.devices()}')
     print(f'Working directory: {workdir}')
 
-    metrics_dict = run_pcpca(config_mnist, config_grass, config_pcpca, workdir)
+    metrics_dict = run_pcpca(config_pcpca, workdir)
     print(metrics_dict)
 
 

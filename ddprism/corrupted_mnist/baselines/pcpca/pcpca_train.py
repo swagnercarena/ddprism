@@ -247,16 +247,16 @@ def run_pcpca(config_pcpca, workdir):
 
     # Compute Sinkhorn divegence.
     divergence_post = metrics.sinkhorn_divergence(
-        post_samples[:config_mnist.sinkhorn_div_samples],
-        x_uncorrupted[:config_mnist.sinkhorn_div_samples]
+        post_samples.reshape(post_samples.shape[0], -1)[:config_mnist.sinkhorn_div_samples],
+        x_uncorrupted.reshape(x_uncorrupted.shape[0], -1)[:config_mnist.sinkhorn_div_samples]
     )
     wandb.log(
         {f'div_post': divergence_post}, commit=False
     )
 
     divergence_prior = metrics.sinkhorn_divergence(
-        prior_samples[:config_mnist.sinkhorn_div_samples],
-        x_uncorrupted[:config_mnist.sinkhorn_div_samples]
+        prior_samples.reshape(prior_samples.shape[0], -1)[:config_mnist.sinkhorn_div_samples],
+        x_uncorrupted.reshape(x_uncorrupted.shape[0], -1)[:config_mnist.sinkhorn_div_samples]
     )
     wandb.log(
         {f'div_prior': divergence_prior}, commit=False

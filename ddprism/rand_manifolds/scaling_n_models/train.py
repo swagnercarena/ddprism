@@ -284,11 +284,7 @@ def main(_):
         # Don't pass config to wandb.init() if running as part of a sweep
         # to avoid overwriting sweep parameters
         print('Running as part of a sweep.')
-        wandb.init(
-            project=config.wandb_kwargs.get('project', None),
-            name=config.wandb_kwargs.get('run_name', None),
-            mode=config.wandb_kwargs.get('mode', 'disabled')
-        )
+        wandb.init()
         config = update_config_with_sweep(config)
     else:
         # Normal run - pass our config to wandb

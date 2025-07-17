@@ -3,7 +3,7 @@
 ### 1. Create a Sweep
 
 ```bash
-python launch_sweep.py
+wandb sweep sweep_config.yaml
 ```
 
 This will create a new wandb sweep and display the sweep ID, `sweep_id_value`. This need to be passed to sbatch scripts.

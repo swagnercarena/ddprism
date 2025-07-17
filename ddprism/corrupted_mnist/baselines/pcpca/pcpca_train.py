@@ -284,8 +284,8 @@ def run_pcpca(config_pcpca, workdir):
     metrics_dict['pqmass_post'] = float(pqmass_post)
     metrics_dict['pqmass_prior'] = float(pqmass_prior)
 
-    metrics_dict['div_post'] = float(div_post)
-    metrics_dict['div_prior'] = float(div_prior)
+    metrics_dict['div_post']  = float(divergence_post)
+    metrics_dict['div_prior'] = float(divergence_prior)
 
     wandb.finish()
     return metrics_dict

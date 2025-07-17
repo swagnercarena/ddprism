@@ -17,6 +17,8 @@ from ddprism import diffusion
 from ddprism import training_utils
 from ddprism import utils
 from ddprism import plotting_utils
+from ddprism.metrics import metrics
+from ddprism.rand_manifolds.random_manifolds import MAX_SPREAD
 
 import load_dataset
 
@@ -149,10 +151,13 @@ def _sample_wrapper_joint(
         )
 
     # For the Gibbs sampling case:
-    # When training the model for the 1st source, use equivalent number of sampling steps.
+    # When training the model for the 1st source, use equivalent number of
+    # sampling steps.
     if 'gibbs_rounds' in sampling_kwargs:
         sampling_kwargs = sampling_kwargs.to_dict().copy()
-        sampling_kwargs['steps'] = sampling_kwargs['steps'] * sampling_kwargs['gibbs_rounds']
+        sampling_kwargs['steps'] = (
+            sampling_kwargs['steps'] * sampling_kwargs['gibbs_rounds']
+        )
 
 
     # Sample given the current posterior.
@@ -214,22 +219,26 @@ def _sample_wrapper_gibbs(
 
 
 def _sample_wrapper(
-    rng, x_post, post_state, state_list, variables, config, n_sources, gaussian=False
+    rng, x_post, post_state, state_list, variables, config, n_sources,
+    gaussian=False
 ):
     # When fitting only one source, use MMPS sampling strategy.
     if n_sources == 1:
         return _sample_wrapper_joint(
-                rng, post_state, state_list, variables, config, n_sources, gaussian
+                rng, post_state, state_list, variables, config, n_sources,
+                gaussian
             )
     else:
         sampling_strategy = config.get('sampling_strategy', 'joint')
         if sampling_strategy == 'gibbs':
             return _sample_wrapper_gibbs(
-                rng, x_post, post_state, state_list, variables, config, n_sources, gaussian
+                rng, x_post, post_state, state_list, variables, config,
+                n_sources, gaussian
             )
         elif sampling_strategy == 'joint':
             return _sample_wrapper_joint(
-                rng, post_state, state_list, variables, config, n_sources, gaussian
+                rng, post_state, state_list, variables, config, n_sources,
+                gaussian
             )
         else:
             raise ValueError(f'Invalid sampling strategy {sampling_strategy}.')
@@ -274,13 +283,17 @@ def main(_):
         assert len(config.gaussian_em_laps) == config.n_sources
         gaussian_em_laps = config.gaussian_em_laps
     else:
-        gaussian_em_laps = [config.gaussian_em_laps for i in range(config.n_sources)]
+        gaussian_em_laps = [
+            config.gaussian_em_laps for _ in range(config.n_sources)
+        ]
 
     if isinstance(config.diffusion_em_laps, list):
         assert len(config.diffusion_em_laps) == config.n_sources
         diffusion_em_laps = config.diffusion_em_laps
     else:
-        diffusion_em_laps = [config.diffusion_em_laps for i in range(config.n_sources)]
+        diffusion_em_laps = [
+            config.diffusion_em_laps for _ in range(config.n_sources)
+        ]
 
     for source_index in range(config.n_sources):
         n_sources = source_index + 1
@@ -312,13 +325,14 @@ def main(_):
             f'Fitting source {source_index+1} with a Gaussian denoiser ' +
             'to observations.'
         )
-        for _ in tqdm(range(gaussian_em_laps[source_index]), desc='Gaussian denoiser EM'):
+        for _ in tqdm(
+            range(gaussian_em_laps[source_index]), desc='Gaussian denoiser EM'
+        ):
             # Set up rng and sample
             rng_sample, rng = jax.random.split(rng)
             x_post = _sample_wrapper(
                 rng_sample, x_post, post_state, state_list, variables, config,
-                n_sources,
-                gaussian=True
+                n_sources, gaussian=True
             )
 
             # Fit a new Gaussian for the n-th source distribution.
@@ -344,24 +358,34 @@ def main(_):
         if config.log_figure:
             fig = plotting_utils.show_corner(jnp.concat(x_post, axis=1))._figure
             wandb.log(
-                    {'posterior samples': wandb.Image(fig)},
-                    step=step_offset * config.epochs + 1
+                    {'posterior samples': wandb.Image(fig)}, commit=False
                 )
 
-        # Record the initial divergence.
-        divergence_dict = {}
+        # Log the initial divergence, pqmass, and psnr.
+        metrics_dict = {}
         for i, x_single in enumerate(x_post):
-            divergence = utils.sinkhorn_divergence(
+            divergence = metrics.sinkhorn_divergence(
                 x_single[:config.sinkhorn_samples],
                 x_all[:config.sinkhorn_samples, i]
             )
-            divergence_dict[f'divergence_x_{i}'] = divergence
-        wandb.log(divergence_dict, step=step_offset * config.epochs + 1)
+            metrics_dict[f'divergence_x_{i}'] = divergence
+            pqmass = metrics.pq_mass(
+                x_single[:config.pqmass_samples],
+                x_all[:config.pqmass_samples, i]
+            )
+            metrics_dict[f'pqmass_x_{i}'] = pqmass
+            psnr = metrics.psnr(
+                x_single[:config.psnr_samples],
+                x_all[:config.psnr_samples, i],
+                max_spread=MAX_SPREAD
+            )
+            metrics_dict[f'psnr_x_{i}'] = psnr
+        wandb.log(metrics_dict, commit=False)
 
         # Save the state list and samples.
         ckpt = {
             'state_list': state_list, 'x_post': x_post,
-            'divergence': divergence_dict, 'config': config.to_dict()
+            'metrics': metrics_dict, 'config': config.to_dict()
         }
         save_args = orbax_utils.save_args_from_target(ckpt)
         checkpoint_manager.save(
@@ -387,7 +411,7 @@ def main(_):
             pbar = tqdm(
                 range(1, config.epochs + 1), desc='Train epoch', leave=False
             )
-            for epoch in pbar:
+            for _ in pbar:
                 rng_epoch, rng = jax.random.split(rng, 2)
                 batch_i = jax.random.randint(
                     rng_epoch, shape=(config.batch_size,), minval=0,
@@ -401,10 +425,7 @@ def main(_):
                 state_list[source_index] = update_model( # pylint: disable=not-callable
                     state_list[source_index], grads
                 )
-                wandb.log(
-                        {f'loss_state_{source_index}': loss},
-                        step=((step + step_offset) * config.epochs + epoch)
-                )
+                wandb.log({f'loss_state_{source_index}': loss})
 
 
             # Sample the new posterior.
@@ -416,29 +437,40 @@ def main(_):
 
             # Log a figure with new posterior samples.
             if config.log_figure:
-                fig = plotting_utils.show_corner(jnp.concat(x_post, axis=1))._figure
+                fig = plotting_utils.show_corner(
+                    jnp.concat(x_post, axis=1)
+                )._figure
                 wandb.log(
-                    {'posterior samples': wandb.Image(fig)},
-                    step=(step + 1 + step_offset) * config.epochs
+                    {'posterior samples': wandb.Image(fig)}, commit=False
                 )
 
-            # Log the divergence.
-            divergence_dict = {}
+            # Log the divergence, pqmass, and psnr.
+            metrics_dict = {}
             for i, x_single in enumerate(x_post):
-                divergence = utils.sinkhorn_divergence(
+                divergence = metrics.sinkhorn_divergence(
                     x_single[:config.sinkhorn_samples],
                     x_all[:config.sinkhorn_samples, i]
                 )
-                divergence_dict[f'divergence_x_{i}'] = divergence
+                metrics_dict[f'divergence_x_{i}'] = divergence
+                pqmass = metrics.pq_mass(
+                    x_single[:config.pqmass_samples],
+                    x_all[:config.pqmass_samples, i]
+                )
+                metrics_dict[f'pqmass_x_{i}'] = pqmass
+                psnr = metrics.psnr(
+                    x_single[:config.psnr_samples],
+                    x_all[:config.psnr_samples, i],
+                    max_spread=MAX_SPREAD
+                )
+                metrics_dict[f'psnr_x_{i}'] = psnr
             wandb.log(
-                divergence_dict,
-                step=(step + 1 + step_offset) * config.epochs
+                metrics_dict, commit=False
             )
 
             # Save the state list and samples.
             ckpt = {
                 'state_list': state_list, 'x_post': x_post,
-                'divergence': divergence_dict, 'config': config.to_dict()
+                'metrics': metrics_dict, 'config': config.to_dict()
             }
             save_args = orbax_utils.save_args_from_target(ckpt)
             checkpoint_manager.save(

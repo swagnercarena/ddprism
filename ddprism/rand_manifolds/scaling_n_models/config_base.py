@@ -25,10 +25,12 @@ def get_config():
     config.emb_features = 64
 
     # Posterior parameters.
-    config.post_rtol = 1e-3
+    config.post_rtol = 1e-6
     config.post_maxiter = 1
     config.post_use_dplr = True
-    config.post_safe_divide = 1e-4
+    config.post_safe_divide = 1e-3
+    config.post_regularization = 1e-3
+    config.post_error_threshold = 1e0
 
     # Training parameters.
     config.lr_init_val = 1e-3
@@ -41,10 +43,16 @@ def get_config():
 
     # Sampling arguments
     config.sampling_kwargs = ConfigDict(
-        {'steps': 16384, 'sampler': 'pc', 'corrections': 1, 'tau': 1e-1}
+        {
+            'steps': 16384, 'sampler': 'pc', 'corrections': 1, 'tau': 1e-1,
+            'clip_method': 'none'
+        }
     )
     config.gaussian_sampling_kwargs = ConfigDict(
-        {'steps': 16384, 'sampler': 'pc', 'corrections': 1, 'tau': 1e-1}
+        {
+            'steps': 16384, 'sampler': 'pc', 'corrections': 1, 'tau': 1e-1,
+            'clip_method': 'none'
+        }
     )
 
     config.sinkhorn_samples = 16384
@@ -56,7 +64,7 @@ def get_config():
 
     # wandb parameters
     config.wandb_kwargs = ConfigDict(
-        {'project': 'mvss-dif-scaling', 'mode': 'online', 'run_name': None}
+        {'project': 'rand-manifolds-cont', 'mode': 'online', 'run_name': None}
     )
     config.log_figure = False
 

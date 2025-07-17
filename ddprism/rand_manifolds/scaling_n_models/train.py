@@ -527,12 +527,16 @@ def main(_):
     wandb.finish()
 
 
+def run_sweep(_):
+    """Run a sweep using wandb.agent."""
+    wandb.agent(
+        os.environ['WANDB_SWEEP_ID'], functools.partial(main, _=None),
+        count=1
+    )
+
+
 if __name__ == '__main__':
-    # Run a sweep if WANDB_SWEEP_ID is set.
     if os.environ.get('WANDB_SWEEP_ID') is not None:
-        wandb.agent(
-            os.environ.get('WANDB_SWEEP_ID'), functools.partial(main, _=None),
-            count=1
-        )
+        app.run(run_sweep)
     else:
         app.run(main)

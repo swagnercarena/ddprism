@@ -6,7 +6,7 @@ from absl import app, flags
 from flax.training import orbax_utils, train_state
 import jax
 import jax.numpy as jnp
-from ml_collections import config_flags
+from ml_collections import config_flags, ConfigDict
 import numpy as np
 from orbax.checkpoint import CheckpointManager, PyTreeCheckpointer
 import optax
@@ -27,6 +27,28 @@ flags.DEFINE_string('workdir', None, 'working directory.')
 config_flags.DEFINE_config_file(
     'config', None, 'File path to the training configuration.',
 )
+
+
+def update_config_with_sweep(config):
+    """Update config with wandb sweep parameters if available."""
+    if hasattr(wandb, 'config') and wandb.config:
+        print(f"Updating config with sweep parameters: {dict(wandb.config)}")
+        # Create a mutable copy of the config
+        config_dict = config.to_dict()
+
+        # Update with sweep parameters
+        for key, value in wandb.config.items():
+            if '.' in key:
+                # Handle nested keys. Will fail if the key is not in the config.
+                parts = key.split('.')
+                config_dict[parts[0]][parts[1]] = value
+            else:
+                config_dict[key] = value
+
+        # Convert back to ConfigDict
+        return ConfigDict(config_dict)
+
+    return config
 
 
 def create_train_state_list(
@@ -254,13 +276,24 @@ def main(_):
     print(f'Found devices {jax.devices()}')
     print(f'Working directory: {workdir}')
 
-    # Set up wandb logging and checkpointing.
-    wandb.init(
-        config=config.copy_and_resolve_references(),
-        project=config.wandb_kwargs.get('project', None),
-        name=config.wandb_kwargs.get('run_name', None),
-        mode=config.wandb_kwargs.get('mode', 'disabled')
-    )
+    # Set up wandb logging and checkpointing. Use sweep if SWEEP_ID is set.
+    if os.environ.get('WANDB_SWEEP_ID') is not None:
+        # Don't pass config to wandb.init() if running as part of a sweep
+    # to avoid overwriting sweep parameters
+        wandb.init(
+            project=config.wandb_kwargs.get('project', None)
+            name=config.wandb_kwargs.get('run_name', None),
+            mode=config.wandb_kwargs.get('mode', 'disabled')
+        )
+        config = update_config_with_sweep(config)
+    else:
+        # Normal run - pass our config to wandb
+        wandb.init(
+            config=config.copy_and_resolve_references(),
+            project=config.wandb_kwargs.get('project', None),
+            name=config.wandb_kwargs.get('run_name', None),
+            mode=config.wandb_kwargs.get('mode', 'disabled')
+        )
     checkpointer = PyTreeCheckpointer()
     checkpoint_manager = CheckpointManager(
         os.path.join(workdir, 'checkpoints'), checkpointer
@@ -485,6 +518,13 @@ def main(_):
 
         # Need to offset the steps for wandb and checkpoint logging.
         step_offset += diffusion_em_laps[source_index] + 1
+
+    if 'divergence_x_2' in metrics_dict:
+        wandb.log({'final_divergence_x_2': metrics_dict['divergence_x_2']})
+    else:
+        print('No divergence_x_2 in metrics_dict')
+
+    wandb.finish()
 
 
 if __name__ == '__main__':

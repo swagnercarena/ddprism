@@ -30,8 +30,6 @@ parameters:
     values:
       - [128, 128, 128]
       - [256, 256, 256]
-      - [128, 128, 128, 128, 128, 128]
-      - [256, 256, 256, 256, 256, 256]
   emb_features:
     values: [32, 64, 128, 256]
   sampling_kwargs.steps:
@@ -42,3 +40,9 @@ parameters:
     max: 0.1
   post_error_threshold:
     values: [1e-1, 1e0, 1e1]
+  time_conditioning:
+    values: ['concat', 'film']
+  dropout_rate:
+    values: [0.0, 0.01, 0.1]
+  time_mlp_normalize:
+    values: [True, False]

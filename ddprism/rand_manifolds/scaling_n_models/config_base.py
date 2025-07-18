@@ -22,6 +22,8 @@ def get_config():
     config.sde = ConfigDict({'a': 1e-3, 'b': 1e1})
     config.hidden_features = (256, 256, 256)
     config.time_mlp_normalize = True
+    config.time_conditioning = 'concat'
+    config.dropout_rate = 0.0
     config.emb_features = 64
 
     # Posterior parameters.

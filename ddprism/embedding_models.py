@@ -1,7 +1,7 @@
 """Embedding models for use in diffusion."""
 
 import math
-from typing import Any, Callable, Mapping, Sequence, Tuple
+from typing import Any, Callable, Mapping, Optional, Sequence, Tuple
 
 from flax import linen as nn
 import jax
@@ -49,18 +49,23 @@ def positional_embedding(pos, emb_features: int = 64):
 
 
 class TimeMLP(nn.Module):
-    r"""Creates a multi-layer perceptron (MLP).
+    r"""Creates a multi-layer perceptron (MLP) with time conditioning.
 
     Arguments:
         features: The number of output features.
         hid_features: The number of hidden features.
-        activation: The activation function constructor.
+        activation: The activation function.
         normalize: Whether features are normalized between layers or not.
+        dropout_rate: Dropout rate for regularization. Default is 0.0.
+        time_conditioning: Method for time conditioning ('concat', 'film').
+            Default is 'concat'.
     """
     features: int
-    hid_features: list[int] = (64, 64)
-    activation: Callable[..., nn.Module] = nn.silu
+    hid_features: Tuple[int, ...] = (64, 64)
+    activation: Callable[[Array], Array] = nn.silu
     normalize: bool = False
+    dropout_rate: float = 0.0
+    time_conditioning: str = 'concat'
 
     @nn.compact
     def __call__(self, x: Array, t: Array, train: bool = True) -> Array:
@@ -69,20 +74,49 @@ class TimeMLP(nn.Module):
         Arguments:
             x: Input features with shape (*, features).
             t: Time embedding with shape (*, E).
-            train: Has no effect on this module.
+            train: Whether in training mode for dropout.
 
         Returns:
             Conditioned MLP output with shape (*, features).
         """
-        x = jnp.concatenate((x, t), axis=-1)
 
+        # Initial conditioning based on method
+        if self.time_conditioning == 'concat':
+            x = jnp.concatenate((x, t), axis=-1)
+        elif self.time_conditioning == 'film':
+            # FiLM conditioning applied later.
+            pass
+        else:
+            raise ValueError(
+                f"Unknown time conditioning method: {self.time_conditioning}"
+            )
+
+        # Process through hidden layers
         for feat in self.hid_features:
+
+            # Dense layer
             x = nn.Dense(feat)(x)
+
+            # Apply FiLM conditioning if specified.
+            if self.time_conditioning == 'film':
+                # Generate scale and shift parameters from time embedding.
+                film_params = nn.Dense(2 * feat)(t)
+                gamma, beta = jnp.split(film_params, 2, axis=-1)
+
+                # Defaults to normalization of 1.
+                x = (gamma + 1) * x + beta
+
+            # Activation
             x = self.activation(x)
 
             if self.normalize:
                 x = nn.LayerNorm()(x)
 
+            # Dropout
+            if self.dropout_rate > 0.0:
+                x = nn.Dropout(self.dropout_rate)(x, deterministic=not train)
+
+        # Final output layer
         x = nn.Dense(self.features)(x)
         return x
 

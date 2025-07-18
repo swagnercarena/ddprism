@@ -141,7 +141,9 @@ def create_denoiser_timemlp(config):
     # TimeMLP
     time_mlp = embedding_models.TimeMLP(
         features=config.feat_dim, hid_features=config.hidden_features,
-        normalize=config.time_mlp_normalize
+        normalize=config.time_mlp_normalize,
+        time_conditioning=config.time_conditioning,
+        dropout_rate=config.dropout_rate
     )
 
     # Denoiser

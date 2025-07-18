@@ -42,6 +42,9 @@ def _create_test_config():
     # TimeMLP parameters
     config.hidden_features = (32, 32)
     config.time_mlp_normalize = True
+    config.time_conditioning = 'concat'
+    config.dropout_rate = 0.0
+
 
     # Configurable hyperparameters
     config.optimizer = ConfigDict({

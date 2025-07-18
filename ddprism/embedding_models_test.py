@@ -81,6 +81,67 @@ class TimeMLPTests(chex.TestCase):
         expect_x = apply_func(params, x_draws, t_draws)
         self.assertTupleEqual(expect_x.shape, (batch_size, features))
 
+    @chex.all_variants
+    def test_time_conditioning_methods(self):
+        """Test that both 'concat' and 'film' time conditioning methods work."""
+        rng = jax.random.PRNGKey(42)
+        features = 8
+        time_features = 4
+        hid_features = (16, 16)
+        batch_size = 16
+
+        # Generate test data
+        rng_x, rng_t = jax.random.split(rng)
+        x_draws = jax.random.normal(rng_x, shape=(batch_size, features))
+        t_draws = jax.random.uniform(rng_t, shape=(batch_size, time_features))
+
+        # Test 'concat' method (default)
+        time_mlp_concat = embedding_models.TimeMLP(
+            features, hid_features, time_conditioning='concat'
+        )
+        params_concat = time_mlp_concat.init(
+            rng, jnp.ones((1, features)), jnp.ones((1, time_features))
+        )
+
+        # Check the weight shapes to confirm the normalization.
+        self.assertTupleEqual(
+            params_concat['params']['Dense_0']['kernel'].shape,
+            (features, hid_features[0])
+        )
+        self.assertTupleEqual(
+            params_concat['params']['Dense_1']['kernel'].shape,
+            (hid_features[0], hid_features[1])
+        )
+        # Check the output shape.
+        apply_func_concat = self.variant(time_mlp_concat.apply)
+        output_concat = apply_func_concat(params_concat, x_draws, t_draws)
+        self.assertTupleEqual(output_concat.shape, (batch_size, features))
+
+        # Test 'film' method
+        time_mlp_film = embedding_models.TimeMLP(
+            features, hid_features, time_conditioning='film'
+        )
+        params_film = time_mlp_film.init(
+            rng, jnp.ones((1, features)), jnp.ones((1, time_features))
+        )
+
+        # Check the weight shapes to confirm the normalization.
+        self.assertTupleEqual(
+            params_film['params']['Dense_0']['kernel'].shape,
+            (features, hid_features[0])
+        )
+        self.assertTupleEqual(
+            params_film['params']['Dense_1']['kernel'].shape,
+            (time_features, 2 * hid_features[0])
+        )
+
+        apply_func_film = self.variant(time_mlp_film.apply)
+        output_film = apply_func_film(params_film, x_draws, t_draws)
+        self.assertTupleEqual(output_film.shape, (batch_size, features))
+
+        # Test that the outputs are different (they should be due to different conditioning)
+        self.assertFalse(jnp.allclose(output_concat, output_film))
+
 
 class AdaLNZeroModulationTests(chex.TestCase):
     """Run tests for LayerNorm"""

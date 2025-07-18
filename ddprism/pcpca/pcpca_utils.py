@@ -136,7 +136,7 @@ def loss_grad(
 
     Args:
         params: Parameters of the PCPCA model. Dict with keys 'weights' and
-            'log_sigma', 'mu_x', 'mu_y'.
+            'log_sigma', 'mu'.
         x_obs: Observed data with enriched signal.
         y_obs: Observed data with only background signal.
         x_a_mat: Transformation matrix for enriched signal.
@@ -219,7 +219,7 @@ def loss_grad(
 
     grad_log_sigma *= sigma ** 2
 
-    # Add gradient of mu_x and mu_y.
+    # Add gradient of mu.
     # Start with linear terms.
     c_inv_x = stable_solve_vmap(c_mat, x_obs[:, :, None], regularization)
     d_inv_y = stable_solve_vmap(d_mat, y_obs[:, :, None], regularization)

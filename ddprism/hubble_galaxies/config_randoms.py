@@ -20,7 +20,7 @@ def get_config():
     config.hid_channels = (64, 128, 256, 256, 512)
     config.hid_blocks = (2, 2, 2, 2, 2)
     config.kernel_size = (3, 3)
-    config.emb_features = 64
+    config.emb_features = 128
     config.heads = {'2': 4, '3': 8, '4': 16}
     config.dropout_rate = 0.1
 
@@ -35,11 +35,11 @@ def get_config():
     # Training parameters.
     config.lr_init_val = 1e-5
     config.epochs = 4096
-    config.use_dynamic = True
+    config.use_dynamic = False
     config.em_laps = 32
     config.gaussian_em_laps = 4
     config.batch_size = 32
-    config.ema_decay = 0.999
+    config.ema_decay = 0.995
     config.grad_clip_norm = 1.0
     config.optimizer = ConfigDict({
         'type': 'adam',

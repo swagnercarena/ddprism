@@ -18,17 +18,13 @@ def get_config():
     config.sampling_kwargs = ConfigDict(
         {
             'steps': 64, 'sampler': 'pc', 'corrections': 1, 'tau': 1e-1,
-            'clip_method': 'value', 'clip_adaptive': True,
-            'clip_value': config.data_max, 'clip_early_scaling': 0.5,
-            'clip_late_scaling': 1.0
+            'clip_method': 'none'
         }
     )
     config.gaussian_sampling_kwargs = ConfigDict(
         {
             'steps': 64, 'sampler': 'pc', 'corrections': 1, 'tau': 1e-1,
-            'clip_method': 'value', 'clip_adaptive': True,
-            'clip_value': config.data_max, 'clip_early_scaling': 0.5,
-            'clip_late_scaling': 1.0
+            'clip_method': 'none'
         }
     )
 

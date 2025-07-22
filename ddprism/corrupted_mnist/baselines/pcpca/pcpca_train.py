@@ -29,51 +29,72 @@ config_flags.DEFINE_config_file(
     'config_pcpca', None, 'File path to the training configuration for PCPCA parameters.',
 )
 
-# Path to Imagenet dataset
-imagenet_path = '/mnt/home/aakhmetzhanova/ceph/galaxy-diffusion/corrupted-mnist/dataset/grass_jpeg/' 
-# Path to the classifier model
+# Path to Imagenet dataset.
+imagenet_path = Path('/mnt/home/aakhmetzhanova/ceph/galaxy-diffusion/corrupted-mnist/dataset/grass_jpeg/')
+# Path to the classifier model.
 classifier_path = Path('/mnt/home/swagner/ceph/corrupted_mnist/mnist_classifier/')
 
 @partial(jax.jit, static_argnames=['batch_size', 'img_dim'])
 def get_posterior_samples(rng, params, x, y, mnist_amp, img_dim=28, batch_size=16):
-    """Computes posterior samples for a given target dataset, given a dictionary of pcpca parameters 
-    and background dataset.
-    
+    """Compute posterior samples for corrupted MNIST digits.
+
+    Args: 
+        rng: Rng key for sampling.
+        params: Dictionary of PCPCA parameters.
+        x: Target dataset (MNIST digits on top of grass images from ImageNet).
+        y: Background dataset (grass images from ImageNet).
+        mnist_amp: Amplitude of MNIST digits in the target dataset.
+        img_dim: Size of the image (number of pixels per side).
+        batch_size: Batch size for processing the target dataset with jax.lax.map.
+        
     Returns:
-        Posterior samples.
+        Posterior samples for uncorrupted MNIST digits from the target dataset.
     
     """
+    # Mixing matrix A is identity for full resolution grassy MNIST dataset.
     a_mat = jnp.eye(x.shape[-1])
+    # Compute mean signal for the background dataset.
     bkg_mean = y.mean(axis=0)
 
-    # Get individual random keys for each image.
+    # Get individual random keys for each posterior sample.
     rng_post = jax.random.split(rng, x.shape[0])
-    
+
+    # Helper functions
+    # Compute the mean and covariance for the signal posterior.
     def calculate_posterior(x):
         return pcpca_utils.calculate_posterior(params, x, a_mat) 
-
+    # Draw a sample from the signal posterior distribution.
     def post_samples(args):
         rng, x = args
         mean, sigma = calculate_posterior(x)
         return (jax.random.multivariate_normal(rng, mean, sigma) - bkg_mean) / mnist_amp
-        
+
+    # Draw posterior samples for the entire dataset.
     post_samples = jax.lax.map(post_samples, (rng_post, x), batch_size=batch_size)
     return post_samples.reshape(-1, img_dim, img_dim, 1)
 
-def get_prior_samples(rng, params, num_samples, latent_dim, feat_dim, bkg, mnist_amp, img_dim=28):
-    """Computes prior samples for a given target dataset, given a dictionary of pcpca parameters 
-    and background dataset.
-    
+def get_prior_samples(rng, params, num_samples, latent_dim, bkg, mnist_amp, img_dim=28):
+    """Draw samples from the prior for MNIST digits.
+
+    Args: 
+        rng: Rng key for sampling.
+        params: Dictionary of PCPCA parameters.
+        num_samples: Number of prior samples to draw.
+        latent_dim: Number of latent dimensions of the PCPCA model.
+        mnist_amp: Amplitude of MNIST digits in the target dataset.
+        img_dim: Size of the image (number of pixels per side).
+        
     Returns:
-        Posterior samples.
+        Prior samples for uncorrupted MNIST digits.
     
     """
-    # Draw latent vectors and noise vectors.
+    # Draw latent and noise vectors.
     rng_z, rng_eps, rng = jax.random.split(rng, 3)
     z_x = jax.random.multivariate_normal(
         rng_z, mean=jnp.zeros((num_samples, latent_dim)), cov=jnp.eye(latent_dim)
     )
-    
+
+    feat_dim = img_dim**2
     eps_x = jax.random.multivariate_normal(
         rng_eps, mean=jnp.zeros((num_samples, feat_dim)), cov = jnp.exp(params['log_sigma'])**2*jnp.eye(feat_dim)
     )
@@ -138,7 +159,6 @@ def run_pcpca(config_pcpca, workdir):
     y = y.squeeze(-1).reshape(-1, feat_dim)
     
     # Fit PCPCA
-    #config_pcpca = config_base_pcpca.get_config()
     params = pcpca_utils.mle_params(x, y, config_pcpca.gamma, config_pcpca.latent_dim, sigma=config_grass.sigma_y);
 
     # Get the posterior samples for MNIST digits.
@@ -148,7 +168,7 @@ def run_pcpca(config_pcpca, workdir):
     # Get prior samples for MNIST digits.
     rng_prior, rng = jax.random.split(rng, 2)
     num_samples = x.shape[0]
-    prior_samples = get_prior_samples(rng_prior, params, num_samples, config_pcpca.latent_dim, feat_dim, y, config_mnist.mnist_amp)
+    prior_samples = get_prior_samples(rng_prior, params, num_samples, config_pcpca.latent_dim, y, config_mnist.mnist_amp)
 
     # Plot the first few prior and posterior samples.
     # Posterior samples

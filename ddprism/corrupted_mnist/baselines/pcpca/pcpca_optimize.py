@@ -33,7 +33,8 @@ def objective(trial, config, workdir):
     config_pcpca.wandb_kwargs['run_name']=f'trial_{trial.number}'
     config_pcpca['gamma']=gamma
     config_pcpca['latent_dim']=latent_dim
-    
+
+    # Record metrics in the optuna study.
     metrics = run_pcpca(config_pcpca, workdir)
     trial.set_user_attr("trial_metrics", metrics)
 
@@ -44,7 +45,7 @@ def main(_):
     """Optimize over PCPCA parameters.
 
     Notes:
-        - The objective function returns the Sinkhorn divergence for source 2.
+        - The objective function returns the FCD score for posterior samples.
     """
     config = FLAGS.config_optuna
 
@@ -54,7 +55,7 @@ def main(_):
     print(f'Found devices {jax.devices()}')
     print(f'Working directory: {workdir}')
 
-    # Define objective function
+    # Define objective function.
     objective_fn = objective
     objective_fn = partial(objective_fn, config=config, workdir=workdir)
 

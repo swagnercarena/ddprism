@@ -280,8 +280,9 @@ def _sample_prior(rng, state_list, config, n_samples):
 
         # Sample given the current posterior.
         samples = sample( # pylint: disable=not-callable
-            rng_source, state, state.params, sample_shape = (n_samples,),
-            feature_shape = config.feat_dim, **config.sampling_kwargs
+            rng_source, state, {'params': state.params},
+            sample_shape=(n_samples,), feature_shape=config.feat_dim,
+            **config.sampling_kwargs
         )
         x_prior.append(samples)
 

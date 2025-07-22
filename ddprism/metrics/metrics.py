@@ -6,12 +6,15 @@ import ot
 from pqm import pqm_pvalue
 
 
-def pq_mass(dist_1: Array, dist_2: Array, **kwargs) -> Array:
+def pq_mass(
+    dist_1: Array, dist_2: Array, re_tessellation: int = 1000, **kwargs
+) -> Array:
     r"""Computes PQMass p values: https://arxiv.org/abs/2402.04355.
 
     Arguments:
         dist_1: Samples from the first distribution.
         dist_2: Samples from the second distribution.
+        re_tessellation: Number of re-tessellations to use for PQMass.
         **kwargs: Additional arguments for computing PQMass.
 
     Returns:
@@ -22,9 +25,11 @@ def pq_mass(dist_1: Array, dist_2: Array, **kwargs) -> Array:
     dist_1 = dist_1.reshape(dist_1.shape[0], -1)
     dist_2 = dist_2.reshape(dist_2.shape[0], -1)
 
-    chi2_vals = pqm_pvalue(dist_1, dist_2, **kwargs)
+    chi2_vals = pqm_pvalue(
+        dist_1, dist_2, re_tessellation=re_tessellation, **kwargs
+    )
 
-    return jnp.mean(chi2_vals)
+    return jnp.mean(jnp.array(chi2_vals))
 
 
 def sinkhorn_divergence(

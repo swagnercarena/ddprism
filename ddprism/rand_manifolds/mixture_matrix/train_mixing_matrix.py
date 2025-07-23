@@ -16,7 +16,7 @@ import wandb
 from ddprism import diffusion
 from ddprism import linalg
 from ddprism import training_utils
-from ddprism import utils
+from ddprism import metrics
 from ddprism.rand_manifolds import random_manifolds
 
 FLAGS = flags.FLAGS
@@ -169,14 +169,17 @@ def create_posterior_train_state_joint(rng, config, gaussian_indices=None):
 sample = jax.jit( # pylint: disable=invalid-name
     utils.sample,
     static_argnames=[
-        'sample_shape', 'feature_shape', 'steps','sampler','corrections'
+        'sample_shape', 'feature_shape', 'steps', 'sampler', 'corrections',
+        'clip_method'
     ],
 )
 
 
 sample_gibbs = jax.jit( # pylint: disable=invalid-name
     utils.sample_gibbs,
-    static_argnames=['steps','sampler','corrections','gibbs_rounds'],
+    static_argnames=[
+        'steps', 'sampler', 'corrections', 'gibbs_rounds', 'clip_method'
+    ],
 )
 
 
@@ -282,6 +285,26 @@ def _sample_wrapper(
         raise ValueError(f'Invalid sampling strategy {sampling_strategy}.')
 
 
+def _sample_prior(rng, state_list, config, n_samples):
+    """Wrapper for sampling prior samples from individual denoiser models."""
+    x_prior = []
+
+    for state in state_list:
+        # Split rng for each source.
+        rng_source, rng = jax.random.split(rng)
+
+        # Sample given the current posterior.
+        samples = sample( # pylint: disable=not-callable
+            rng_source, state, {'params': state.params},
+            sample_shape=(n_samples,), feature_shape=config.feat_dim,
+            **config.sampling_kwargs
+        )
+        x_prior.append(samples)
+
+    # Return a list for each source to match posterior sampling output.
+    return x_prior
+
+
 def main(_):
     """Train a joint posterior denoiser."""
     config = FLAGS.config
@@ -356,20 +379,58 @@ def main(_):
         gaussian=True
     )
 
-    # Record the initial divergence.
-    divergence_dict = {}
+    # Log the initial divergence, pqmass, and psnr for posterior samples.
+    metrics_dict = {}
     for i, x_single in enumerate(x_post):
-        divergence = utils.sinkhorn_divergence(
+        divergence = metrics.sinkhorn_divergence(
             x_single[:config.sinkhorn_samples],
             x_all[:config.sinkhorn_samples, i]
         )
-        divergence_dict[f'divergence_x_{i}'] = divergence
-    wandb.log(divergence_dict, step=1)
+        metrics_dict[f'divergence_x_{i}'] = divergence
+        pqmass = metrics.pq_mass(
+            x_single[:config.pqmass_samples],
+            x_all[:config.pqmass_samples, i]
+        )
+        metrics_dict[f'pqmass_x_{i}'] = pqmass
+        psnr = metrics.psnr(
+            x_single[:config.psnr_samples],
+            x_all[:config.psnr_samples, i],
+            max_spread=random_manifolds.MAX_SPREAD
+        )
+        metrics_dict[f'psnr_x_{i}'] = psnr
+
+    # Log prior metrics at end of Gaussian EM. Only draw as many samples as
+    # we need for the metrics.
+    rng_prior, rng = jax.random.split(rng)
+    x_prior = _sample_prior(
+        rng_prior, state_list, config,
+        max(config.sinkhorn_samples, config.pqmass_samples, config.psnr_samples)
+    )
+
+    for i, x_single_prior in enumerate(x_prior):
+        divergence_prior = metrics.sinkhorn_divergence(
+            x_single_prior[:config.sinkhorn_samples],
+            x_all[:config.sinkhorn_samples, i]
+        )
+        metrics_dict[f'prior_divergence_x_{i}'] = divergence_prior
+        pqmass_prior = metrics.pq_mass(
+            x_single_prior[:config.pqmass_samples],
+            x_all[:config.pqmass_samples, i]
+        )
+        metrics_dict[f'prior_pqmass_x_{i}'] = pqmass_prior
+        psnr_prior = metrics.psnr(
+            x_single_prior[:config.psnr_samples],
+            x_all[:config.psnr_samples, i],
+            max_spread=random_manifolds.MAX_SPREAD
+        )
+        metrics_dict[f'prior_psnr_x_{i}'] = psnr_prior
+
+    wandb.log(metrics_dict, commit=False)
 
     # Save the state list and samples.
     ckpt = {
-        'state_list': state_list, 'x_post': x_post,
-        'divergence': divergence_dict, 'config': config.to_dict()
+        'state_list': state_list, 'x_post': x_post, 'x_prior': x_prior,
+        'metrics': metrics_dict, 'config': config.to_dict()
     }
     save_args = orbax_utils.save_args_from_target(ckpt)
     checkpoint_manager.save(0, ckpt, save_kwargs={'save_args': save_args})
@@ -386,7 +447,7 @@ def main(_):
 
         # Training laps between samples.
         pbar = tqdm(range(config.epochs), desc='Train epoch', leave=False)
-        for epoch in pbar:
+        for _ in pbar:
             rng_epoch, rng = jax.random.split(rng, 2)
             batch_i = jax.random.randint(
                 rng_epoch, shape=(config.batch_size,), minval=0,
@@ -403,7 +464,7 @@ def main(_):
                 state_list[i] = state
                 wandb.log(
                     {f'loss_state_{i}': loss},
-                    step=(step * config.epochs + epoch)
+                    commit=(i == len(state_list) - 1)
                 )
 
         # Sample the new posterior.
@@ -412,20 +473,61 @@ def main(_):
             rng_sample, x_post, post_state, state_list, variables, config
         )
 
-        # Log the divergence.
-        divergence_dict = {}
+        # Log the divergence, pqmass, and psnr for posterior samples.
+        metrics_dict = {}
         for i, x_single in enumerate(x_post):
-            divergence = utils.sinkhorn_divergence(
+            divergence = metrics.sinkhorn_divergence(
                 x_single[:config.sinkhorn_samples],
                 x_all[:config.sinkhorn_samples, i]
             )
-            divergence_dict[f'divergence_x_{i}'] = divergence
-        wandb.log(divergence_dict, step=(step + 1) * config.epochs)
+            metrics_dict[f'divergence_x_{i}'] = divergence
+            pqmass = metrics.pq_mass(
+                x_single[:config.pqmass_samples],
+                x_all[:config.pqmass_samples, i]
+            )
+            metrics_dict[f'pqmass_x_{i}'] = pqmass
+            psnr = metrics.psnr(
+                x_single[:config.psnr_samples],
+                x_all[:config.psnr_samples, i],
+                max_spread=random_manifolds.MAX_SPREAD
+            )
+            metrics_dict[f'psnr_x_{i}'] = psnr
+
+        # Log prior metrics at end of each diffusion EM step. Only draw as
+        # many samples as we need for the metrics.
+        rng_prior, rng = jax.random.split(rng)
+        x_prior = _sample_prior(
+            rng_prior, state_list, config,
+            max(
+                config.sinkhorn_samples, config.pqmass_samples,
+                config.psnr_samples
+            )
+        )
+
+        for i, x_single_prior in enumerate(x_prior):
+            divergence_prior = metrics.sinkhorn_divergence(
+                x_single_prior[:config.sinkhorn_samples],
+                x_all[:config.sinkhorn_samples, i]
+            )
+            metrics_dict[f'prior_divergence_x_{i}'] = divergence_prior
+            pqmass_prior = metrics.pq_mass(
+                x_single_prior[:config.pqmass_samples],
+                x_all[:config.pqmass_samples, i]
+            )
+            metrics_dict[f'prior_pqmass_x_{i}'] = pqmass_prior
+            psnr_prior = metrics.psnr(
+                x_single_prior[:config.psnr_samples],
+                x_all[:config.psnr_samples, i],
+                max_spread=random_manifolds.MAX_SPREAD
+            )
+            metrics_dict[f'prior_psnr_x_{i}'] = psnr_prior
+
+        wandb.log(metrics_dict, commit=False)
 
         # Save the state list and samples.
         ckpt = {
-            'state_list': state_list, 'x_post': x_post,
-            'divergence': divergence_dict, 'config': config.to_dict()
+            'state_list': state_list, 'x_post': x_post, 'x_prior': x_prior,
+            'metrics': metrics_dict, 'config': config.to_dict()
         }
         save_args = orbax_utils.save_args_from_target(ckpt)
         checkpoint_manager.save(

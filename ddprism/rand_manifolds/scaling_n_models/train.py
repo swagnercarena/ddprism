@@ -404,8 +404,7 @@ def main(_):
         rng_sample, rng = jax.random.split(rng)
         x_post = _sample_wrapper(
             rng_sample, x_post, post_state, state_list, variables, config,
-            n_sources,
-            gaussian=True
+            n_sources, gaussian=True
         )
 
         # Log a figure with the initial posterior samples.
@@ -577,9 +576,7 @@ def main(_):
                 )
                 metrics_dict[f'prior_psnr_x_{i}'] = psnr_prior
 
-            wandb.log(
-                metrics_dict, commit=False
-            )
+            wandb.log(metrics_dict, commit=False)
 
             # Save the state list and samples.
             ckpt = {

@@ -55,18 +55,18 @@ def append_to_hdf5(filepath, x_randoms, x_galaxies):
         # Append to existing file
         with h5py.File(filepath, 'a') as f:
             # Resize and append randoms
-            randoms_dset = f['randoms']  # type: ignore
-            current_size = randoms_dset.shape[0]  # type: ignore
+            randoms_dset = f['randoms']
+            current_size = randoms_dset.shape[0]
             new_size = current_size + x_randoms.shape[0]
-            randoms_dset.resize(new_size, axis=0)  # type: ignore
-            randoms_dset[current_size:] = x_randoms  # type: ignore
+            randoms_dset.resize(new_size, axis=0)
+            randoms_dset[current_size:] = x_randoms
 
             # Resize and append galaxies
-            galaxies_dset = f['galaxies']  # type: ignore
-            current_size = galaxies_dset.shape[0]  # type: ignore
+            galaxies_dset = f['galaxies']
+            current_size = galaxies_dset.shape[0]
             new_size = current_size + x_galaxies.shape[0]
-            galaxies_dset.resize(new_size, axis=0)  # type: ignore
-            galaxies_dset[current_size:] = x_galaxies  # type: ignore
+            galaxies_dset.resize(new_size, axis=0)
+            galaxies_dset[current_size:] = x_galaxies 
 
 def main(_):
     """Generate samples for the full galaxy dataset."""

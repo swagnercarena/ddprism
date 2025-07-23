@@ -473,6 +473,15 @@ def main(_):
         x_post = _sample_wrapper(
             rng_sample, x_post, post_state, state_list, variables, config
         )
+        # For psnr, we need to sample without dropping samples.
+        if config.get('sampling_mask', True):
+            config.sampling_mask = False
+            x_post_all = _sample_wrapper(
+                rng_sample, x_post, post_state, state_list, variables, config
+            )
+            config.sampling_mask = True
+        else:
+            x_post_all = x_post
 
         # Log the divergence, pqmass, and psnr for posterior samples.
         metrics_dict = {}
@@ -487,8 +496,9 @@ def main(_):
                 x_all[:config.pqmass_samples, i]
             )
             metrics_dict[f'pqmass_x_{i}'] = pqmass
+        for i, x_single_all in enumerate(x_post_all):
             psnr = metrics.psnr(
-                x_single[:config.psnr_samples],
+                x_single_all[:config.psnr_samples],
                 x_all[:config.psnr_samples, i],
                 max_spread=random_manifolds.MAX_SPREAD
             )
@@ -504,6 +514,15 @@ def main(_):
                 config.psnr_samples
             )
         )
+        if config.get('sampling_mask', True):
+            config.sampling_mask = False
+            x_prior_all = _sample_prior(
+                rng_prior, state_list, config,
+                max(config.sinkhorn_samples, config.pqmass_samples, config.psnr_samples)
+            )
+            config.sampling_mask = True
+        else:
+            x_prior_all = x_prior
 
         for i, x_single_prior in enumerate(x_prior):
             divergence_prior = metrics.sinkhorn_divergence(
@@ -516,8 +535,9 @@ def main(_):
                 x_all[:config.pqmass_samples, i]
             )
             metrics_dict[f'prior_pqmass_x_{i}'] = pqmass_prior
+        for i, x_single_prior_all in enumerate(x_prior_all):
             psnr_prior = metrics.psnr(
-                x_single_prior[:config.psnr_samples],
+                x_single_prior_all[:config.psnr_samples],
                 x_all[:config.psnr_samples, i],
                 max_spread=random_manifolds.MAX_SPREAD
             )

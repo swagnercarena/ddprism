@@ -1,5 +1,6 @@
 """Basic configuration for the contrastive problem with Gibbs sampling."""
 import config_base
+from ml_collections import ConfigDict
 
 
 def get_config():

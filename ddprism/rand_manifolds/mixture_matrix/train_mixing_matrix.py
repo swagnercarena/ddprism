@@ -15,6 +15,7 @@ import wandb
 
 from ddprism import diffusion
 from ddprism import linalg
+from ddprism import utils
 from ddprism import training_utils
 from ddprism import metrics
 from ddprism.rand_manifolds import random_manifolds

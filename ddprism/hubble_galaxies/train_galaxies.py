@@ -6,22 +6,21 @@ from absl import app, flags
 from einops import rearrange
 import gc
 from flax import jax_utils
-from flax.training import orbax_utils, train_state
+from flax.training import orbax_utils
 import jax
 import jax.numpy as jnp
 from ml_collections import config_flags, ConfigDict
 from orbax.checkpoint import CheckpointManager, CheckpointManagerOptions
 from orbax.checkpoint import PyTreeCheckpointer
-import optax
 from tqdm import tqdm
 import wandb
 
-from ddprism import diffusion
 from ddprism import training_utils
 from ddprism import utils
 from ddprism.metrics import image_metrics as metrics
 
 from build_parent_sample import NUMPIX
+from hg_utils import create_posterior_train_state_galaxies
 import load_datasets
 import training_dynamics
 
@@ -87,59 +86,6 @@ update_model = jax.pmap( # pylint: disable=invalid-name
 )
 
 
-def create_posterior_train_state(
-    rng, config, config_randoms, image_shape, mu_x=None, cov_x=None,
-    gaussian=False
-):
-    "Create joint posterior denoiser."
-    # Learning rate is irrelevant for the posterior denoiser because we don't
-    # optimize its parameters directly.
-    learning_rate_fn = training_utils.get_learning_rate_schedule(
-        config, config.lr_init_val, config.epochs
-    )
-
-    denoiser_models = [
-        training_utils.create_denoiser_unet(config_randoms, image_shape)
-    ]
-    if gaussian:
-        denoiser_models.append(
-            training_utils.create_denoiser_gaussian(config)
-        )
-    else:
-        denoiser_models.append(
-            training_utils.create_denoiser_unet(config, image_shape)
-        )
-
-    # Joint Denoiser
-    feat_dim = image_shape[0] * image_shape[1] * image_shape[2]
-    posterior_denoiser = diffusion.PosteriorDenoiserJointDiagonal(
-        denoiser_models=denoiser_models, y_features=feat_dim,
-        rtol=config.post_rtol, maxiter=config.post_maxiter,
-        use_dplr=config.post_use_dplr,
-        safe_divide=config.get('post_safe_divide', 1e-32),
-        regularization=config.get('post_regularization', 0.0),
-        error_threshold=config.get('post_error_threshold', None)
-    )
-
-    # Initialize posterior denoiser.
-    params = posterior_denoiser.init(
-        rng, jnp.ones((1, feat_dim * 2)), jnp.ones((1,))
-    )
-    if mu_x is not None:
-        params['params']['denoiser_models_0']['mu_x'] = mu_x
-    if cov_x is not None:
-        params['params']['denoiser_models_0']['cov_x'] = cov_x
-
-    # Use the new configurable optimizer
-    optimizer = training_utils.get_optimizer(config)(learning_rate_fn)
-    grad_clip_norm = config.get('grad_clip_norm', 1.0)
-    tx = optax.chain(optax.clip_by_global_norm(grad_clip_norm), optimizer)
-
-    return train_state.TrainState.create(
-        apply_fn=posterior_denoiser.apply, params=params['params'], tx=tx
-    )
-
-
 def main(_):
     """Train a joint posterior denoiser."""
     config = FLAGS.config
@@ -203,7 +149,7 @@ def main(_):
 
     # Initialize our Gaussian state.
     rng_state, rng = jax.random.split(rng)
-    post_state_gauss = create_posterior_train_state(
+    post_state_gauss = create_posterior_train_state_galaxies(
         rng_state, config, config_randoms, image_shape, gaussian=True
     )
     # Store params before replication
@@ -314,7 +260,7 @@ def main(_):
         rng_state, config, learning_rate_fn, image_shape
     )
     state_unet = jax_utils.replicate(state_unet)
-    post_state_unet = create_posterior_train_state(
+    post_state_unet = create_posterior_train_state_galaxies(
         rng_state, config, config_randoms, image_shape,
     )
     post_state_unet = jax_utils.replicate(post_state_unet)

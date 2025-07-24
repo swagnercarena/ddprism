@@ -37,6 +37,8 @@ def objective(trial, config, workdir):
     config_pcpca['latent_dim']=latent_dim
 
     # Record metrics in the optuna study.
+    workdir = os.path.join(workdir, f'trial_{trial.number}')
+    os.makedirs(workdir, exist_ok=True)
     metrics = run_pcpca(config_pcpca, workdir)
     trial.set_user_attr("trial_metrics", metrics)
 

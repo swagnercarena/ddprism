@@ -60,9 +60,8 @@ def get_posterior_samples(rng, params, y_enr, batch_size=16):
     def post_samples(args):
         rng, y_enr = args
         mean, sigma_post = calculate_posterior(y_enr)
-        # Zero meaned data, so mean doesn't need to be used.
         return (
-            jax.random.multivariate_normal(rng, mean * 0.0, sigma_post)
+            jax.random.multivariate_normal(rng, mean, sigma_post)
         )
 
     # Draw posterior samples for the entire dataset.

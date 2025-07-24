@@ -201,9 +201,9 @@ def run_pcpca(config_pcpca, workdir):
     prior_samples /= config_mnist.mnist_amp
 
     # Unormalize and reshape the enriched dataset for plotting.
+    y_enr = y_enr.reshape(-1, 28, 28, 1)
     y_enr = y_enr * enr_std + enr_mean
     y_enr += bkg_mean
-    y_enr = y_enr.reshape(-1, 28, 28, 1)
 
     # Plot the first few prior and posterior samples.
     n_cols = 5

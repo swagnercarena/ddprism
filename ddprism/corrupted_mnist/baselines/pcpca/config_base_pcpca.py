@@ -10,14 +10,14 @@ def get_config():
     # Configuration files for grass and MNIST digits
     config.config_grass = config_base_grass.get_config()
     config.config_mnist = config_base_mnist.get_config()
-    
+
     # PCPCA parameters
-    config.gamma = 0.15
-    config.latent_dim = 2
+    config.gamma = 0.01
+    config.latent_dim = 8
 
     # Wandb parameters
     config.wandb_kwargs = ConfigDict(
-        {'project': 'pcpca-mnist', 'mode': 'online', 'run_name': None}
+        {'project': 'pcpca-mnist-cont', 'mode': 'online', 'run_name': None}
     )
-    
+
     return config

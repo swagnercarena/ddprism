@@ -30,7 +30,7 @@ flags.DEFINE_string(
     'path to MNIST classifier working directory.'
 )
 
-@partial(jax.jit, static_argnames=['batch_size', 'img_dim'])
+@partial(jax.jit, static_argnames=['batch_size'])
 def get_posterior_samples(rng, params, y_enr, batch_size=16):
     """Compute posterior samples for corrupted MNIST digits.
 

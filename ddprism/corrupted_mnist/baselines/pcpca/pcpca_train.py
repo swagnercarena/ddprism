@@ -83,15 +83,10 @@ def get_prior_samples(rng, params, num_samples):
     latent_dim = params['weights'].shape[1]
 
     # Draw latent and noise vectors.
-    rng_z, rng_eps = jax.random.split(rng, 2)
-    z_samples = jax.random.normal(rng_z, shape=(num_samples, latent_dim))
+    z_samples = jax.random.normal(rng, shape=(num_samples, latent_dim))
 
-    eps_x = jax.random.normal(
-        rng_eps, shape=(num_samples, params['weights'].shape[0])
-    )
-
-    # Compute prior samples for target dataset.
-    prior_samples = ((params['weights'] @ z_samples.T).T + eps_x)
+    # Compute prior samples for target dataset. Assume zero mean.
+    prior_samples = ((params['weights'] @ z_samples.T).T)
 
     return prior_samples
 

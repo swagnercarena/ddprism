@@ -239,15 +239,8 @@ def run_pcpca(config_pcpca, workdir):
             {'psnr_post': psnr_post}, commit=False
     )
     
-    psnr_prior = metrics.psnr(
-            prior_samples[:config_mnist.psnr_samples],
-            x_uncorrupted[:config_mnist.psnr_samples],
-            max_spread=config_mnist.MAX_SPREAD
-    )
-    wandb.log(
-            {'psnr_prior': psnr_prior}, commit=False
-    )
 
+    '''
     # Compute PQMAss.
     pqmass_post = metrics.pq_mass(
         post_samples[:config_mnist.pq_mass_samples],
@@ -264,7 +257,8 @@ def run_pcpca(config_pcpca, workdir):
     wandb.log(
             {'pqmass_prior': pqmass_prior}, commit=False
     )
-
+    '''
+    
     # Compute Sinkhorn divegence.
     divergence_post = metrics.sinkhorn_divergence(
         post_samples.reshape(post_samples.shape[0], -1)[:config_mnist.sinkhorn_div_samples],
@@ -299,10 +293,11 @@ def run_pcpca(config_pcpca, workdir):
     metrics_dict['fcd_prior'] = float(fcd_prior)
     
     metrics_dict['psnr_post'] = float(psnr_post)
-    metrics_dict['psnr_prior'] = float(psnr_prior)
-    
+
+    '''
     metrics_dict['pqmass_post'] = float(pqmass_post)
     metrics_dict['pqmass_prior'] = float(pqmass_prior)
+    '''
 
     metrics_dict['div_post']  = float(divergence_post)
     metrics_dict['div_prior'] = float(divergence_prior)

@@ -13,7 +13,7 @@ def get_config():
 
     # Parameters for PCPCA
     config.gamma_min = 1e-2
-    config.gamma_max = 0.4
+    config.gamma_max = 0.9
     config.latent_dim_min = 2
     config.latent_dim_max = 20
 
@@ -24,5 +24,5 @@ def get_config():
             'run_name': None
         }
     )
-    
+
     return config

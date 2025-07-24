@@ -1,5 +1,4 @@
 "Perform PCPCA optuna runs."
-
 from functools import partial
 import os
 
@@ -21,11 +20,14 @@ config_flags.DEFINE_config_file(
 
 
 def objective(trial, config, workdir):
-    # Run the PCPCA algorithm
-    
+
     # Parameters for PCPCA.
-    gamma = trial.suggest_float('gamma', config.gamma_min, config.gamma_max)
-    latent_dim = trial.suggest_int("latent_dim", config.latent_dim_min, config.latent_dim_max)
+    gamma = trial.suggest_float(
+        'gamma', config.gamma_min, config.gamma_max
+    )
+    latent_dim = trial.suggest_int(
+        "latent_dim", config.latent_dim_min, config.latent_dim_max
+    )
 
     # Run the PCPCA analysis for a given trial.
     config_pcpca = config.pcpca_config

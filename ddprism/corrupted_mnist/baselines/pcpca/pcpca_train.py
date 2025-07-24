@@ -169,6 +169,7 @@ def run_pcpca(config_pcpca, workdir):
         y_enr, y_bkg, config_pcpca.gamma, config_pcpca.latent_dim,
         sigma=config_grass.sigma_y
     )
+    params['mu'] = jnp.zeros(params['mu'].shape) # Zero mean enforced.
 
     # Get the posterior samples for MNIST digits.
     rng_post, rng = jax.random.split(rng, 2)

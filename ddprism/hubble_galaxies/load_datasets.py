@@ -71,9 +71,23 @@ def get_dataloader(
     rng: Sequence[int], dset_name: str, dataset_size: int,
     sample_batch_size: int, pmap_dim: int, norm: Optional[float] = 1.0,
     arcsinh_scaling: Optional[float] = 1.0, data_max: Optional[float] = jnp.inf,
-    flatten=True,  n_models: int=1
+    flatten=True,  n_models: int=1, train: bool=True
 ) -> Generator[np.ndarray, Sequence[linalg.DPLR], np.ndarray]:
     """Get iterator for loading observations and covariance.
+
+    Args:
+        rng: Random number generator.
+        dset_name: Name of the dataset to load.
+        dataset_size: Size of the dataset to load. If -1, use the full dataset.
+        sample_batch_size: Size of the sample batch.
+        pmap_dim: Number of gpus to use in parallel.
+        norm: Overall normalization factor for the dataset.
+        arcsinh_scaling: Arcsinh scaling factor for the dataset.
+        data_max: Maximum absolute value for clamping the dataset.
+        flatten: Whether to flatten the individual samples or return as images.
+        n_models: Number of models to assume for the A matrix.
+        train: Whether the dataset will be used for training, which triggers
+            infinite iteration over the dataset and shuffling.
 
     Notes:
         Possible dataset names are defined in hst_cosmos.py
@@ -85,40 +99,75 @@ def get_dataloader(
         name=dset_name, num_proc=max(n_cores - 1, 1)
     ).with_format('numpy')
 
-    # Check that the reshapes will work
-    assert dataset_size & (sample_batch_size * pmap_dim) == 0
+    # Check that the reshapes will work.
+    assert not train or (dataset_size & (sample_batch_size * pmap_dim) == 0)
+    dataset_size = dataset_size if dataset_size > 0 else len(dset)
 
     # Infinite loop on dataset.
-    while True:
+    continue_loop = True
+    while continue_loop:
         rng, rng_dset = jax.random.split(rng)
         dset_seed = int(
             jax.random.randint(rng_dset, (1,), minval=0, maxval=2**16).item()
         )
-        dset_shuffle = dset.shuffle(seed=dset_seed)
-        # TODO, prefetch?
-        dset_shuffle = dset_shuffle.iter(
-            batch_size=dataset_size, drop_last_batch=True
-        )
+        # Only shuffle if we are training.
+        if train:
+            dset = dset.shuffle(seed=dset_seed)
 
-        for batch in dset_shuffle:
-            if flatten:
-                mapping = '(K M N) H W -> K M N (H W)'
+        # Our concept of a batch changes depending on whether we are training.
+        if train:
+            dset = dset.iter(
+                batch_size=dataset_size, drop_last_batch=False
+            )
+        else:
+            dset = dset.iter(
+                batch_size=pmap_dim * sample_batch_size, drop_last_batch=True
+            )
+
+        for batch in dset:
+            # Reshape for our needs.
+            if train:
+                if flatten:
+                    mapping = '(K M N) H W -> K M N (H W)'
+                else:
+                    mapping = '(K M N) H W -> K M N H W 1'
+                obs = rearrange(
+                    batch['image_flux'], mapping, M=pmap_dim,
+                    N=sample_batch_size
+                )
+                cov_y_all = rearrange(
+                    batch['image_ivar'], mapping, M=pmap_dim,
+                    N=sample_batch_size
+                )
+                A_mat = rearrange(
+                    batch['image_mask'], mapping, M=pmap_dim,
+                    N=sample_batch_size
+                )
             else:
-                mapping = '(K M N) H W -> K M N H W 1'
+                if flatten:
+                    mapping = '(M N) H W -> 1 M N (H W)'
+                else:
+                    mapping = '(M N) H W -> 1 M N H W 1'
+                len_batch = (len(batch['image_flux']) // pmap_dim) * pmap_dim
+                obs = rearrange(
+                    batch['image_flux'][:len_batch], mapping, M=pmap_dim
+                )
+                cov_y_all = rearrange(
+                    batch['image_ivar'][:len_batch], mapping, M=pmap_dim
+                )
+                A_mat = rearrange(
+                    batch['image_mask'][:len_batch], mapping, M=pmap_dim
+                )
 
             # Scale the data and convert to jax array.
-            obs = rearrange(
-                batch['image_flux'], mapping, M=pmap_dim, N=sample_batch_size
-            )
             obs = normalize_dataset(obs, arcsinh_scaling, norm, data_max)
 
             # If inverse variance is zero then we know the value should be
             # masked. Instead, set the variance to a large number. Must also
             # rescale by the arcsinh_scaling.
             cov_ratio = 1 / (arcsinh_scaling ** 2) * (norm ** 2)
-            cov_y_all = rearrange(
-                1.0 / jnp.maximum(batch['image_ivar'], 1e1 / cov_ratio),
-                mapping, M=pmap_dim, N=sample_batch_size
+            cov_y_all = (
+                1.0 / jnp.maximum(cov_y_all, 1e1 / cov_ratio)
             ) * cov_ratio
 
             # Nan safety.
@@ -131,11 +180,7 @@ def get_dataloader(
                 cov_y.append(linalg.DPLR(diagonal=cy))
 
             # Create an A matrix for the observations, which is the reshaped
-            # mask.
-            A_mat = rearrange(
-                batch['image_mask'], mapping, M=pmap_dim, N=sample_batch_size
-            )
-            # Tile the A matrix to match the number of models.
+            # mask. Tile the A matrix to match the number of models.
             if flatten:
                 A_mat = jnp.tile(A_mat[:, :, :, None], (1, 1, 1, n_models, 1))
             else:
@@ -144,3 +189,7 @@ def get_dataloader(
                 )
 
             yield obs, cov_y, A_mat
+
+        # Stop the loop if we are not training.
+        if not train:
+            continue_loop = False

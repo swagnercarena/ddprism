@@ -160,7 +160,8 @@ update_model = jax.jit(training_utils.update_model) # pylint: disable=invalid-na
 
 
 def _sample_wrapper_joint(
-    rng, post_state, state_list, variables, config, n_sources, gaussian
+    rng, post_state, state_list, variables, config, n_sources, gaussian,
+    mask_override=False
 ):
     """Wrapper for sampling operation."""
     params = {
@@ -194,7 +195,7 @@ def _sample_wrapper_joint(
     )
 
     # Mask out large values if requested.
-    if config.get('sampling_mask', True):
+    if config.get('sampling_mask', True) and not mask_override:
         x_post = x_post[
             jnp.all(jnp.logical_and(x_post > -4, x_post < 4), axis=-1)
         ]
@@ -206,7 +207,8 @@ def _sample_wrapper_joint(
 
 
 def _sample_wrapper_gibbs(
-    rng, x_prev, post_state, state_list, variables, config, n_sources, gaussian
+    rng, x_prev, post_state, state_list, variables, config, n_sources, gaussian,
+    mask_override=False
 ):
     """Wrapper for gibbs sampling operation."""
     params = {
@@ -233,7 +235,7 @@ def _sample_wrapper_gibbs(
 
     # Mask out large values if requested. Must still have values for all
     # samples in gibbs, so set to previous value.
-    if config.get('sampling_mask', True):
+    if config.get('sampling_mask', True) and not mask_override:
         mask_region = jnp.any(jnp.logical_or(x_post < -4, x_post > 4), axis=-1)
         x_post = x_post.at[mask_region].set(x_prev[mask_region])
 
@@ -245,26 +247,26 @@ def _sample_wrapper_gibbs(
 
 def _sample_wrapper(
     rng, x_post, post_state, state_list, variables, config, n_sources,
-    gaussian=False
+    gaussian=False, mask_override=False
 ):
     """Overall wrapper for sampling operation."""
     # When fitting only one source, use MMPS sampling strategy.
     if n_sources == 1:
         return _sample_wrapper_joint(
                 rng, post_state, state_list, variables, config, n_sources,
-                gaussian
+                gaussian, mask_override
             )
     else:
         sampling_strategy = config.get('sampling_strategy', 'joint')
         if sampling_strategy == 'gibbs':
             return _sample_wrapper_gibbs(
                 rng, x_post, post_state, state_list, variables, config,
-                n_sources, gaussian
+                n_sources, gaussian, mask_override
             )
         elif sampling_strategy == 'joint':
             return _sample_wrapper_joint(
                 rng, post_state, state_list, variables, config, n_sources,
-                gaussian
+                gaussian, mask_override
             )
         else:
             raise ValueError(f'Invalid sampling strategy {sampling_strategy}.')
@@ -404,8 +406,7 @@ def main(_):
         rng_sample, rng = jax.random.split(rng)
         x_post = _sample_wrapper(
             rng_sample, x_post, post_state, state_list, variables, config,
-            n_sources,
-            gaussian=True
+            n_sources, gaussian=True
         )
 
         # Log a figure with the initial posterior samples.
@@ -518,6 +519,14 @@ def main(_):
                 rng_sample, x_post, post_state, state_list, variables, config,
                 n_sources
             )
+            # For psnr, we need to sample without dropping samples.
+            if config.get('sampling_mask', True):
+                x_post_all = _sample_wrapper(
+                    rng_sample, x_post, post_state, state_list, variables, config,
+                    n_sources, mask_override=True
+                )
+            else:
+                x_post_all = x_post
 
             # Log a figure with new posterior samples.
             if config.log_figure:
@@ -541,8 +550,9 @@ def main(_):
                     x_all[:config.pqmass_samples, i]
                 )
                 metrics_dict[f'pqmass_x_{i}'] = pqmass
+            for i, x_single_all in enumerate(x_post_all):
                 psnr = metrics.psnr(
-                    x_single[:config.psnr_samples],
+                    x_single_all[:config.psnr_samples],
                     x_all[:config.psnr_samples, i],
                     max_spread=MAX_SPREAD
                 )
@@ -570,16 +580,8 @@ def main(_):
                     x_all[:config.pqmass_samples, i]
                 )
                 metrics_dict[f'prior_pqmass_x_{i}'] = pqmass_prior
-                psnr_prior = metrics.psnr(
-                    x_single_prior[:config.psnr_samples],
-                    x_all[:config.psnr_samples, i],
-                    max_spread=MAX_SPREAD
-                )
-                metrics_dict[f'prior_psnr_x_{i}'] = psnr_prior
 
-            wandb.log(
-                metrics_dict, commit=False
-            )
+            wandb.log(metrics_dict, commit=False)
 
             # Save the state list and samples.
             ckpt = {

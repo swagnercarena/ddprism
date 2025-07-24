@@ -179,7 +179,7 @@ def run_pcpca(config_pcpca, workdir):
     # Get the posterior samples for MNIST digits.
     rng_post, rng = jax.random.split(rng, 2)
     post_samples  = get_posterior_samples(
-        rng_post, params, y_enr, config_mnist.mnist_amp
+        rng_post, params, y_enr
     )
     # Reshape and unnormalize the posterior samples.
     post_samples = post_samples.reshape(-1, 28, 28, 1)

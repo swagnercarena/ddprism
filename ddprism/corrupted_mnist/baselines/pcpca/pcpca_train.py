@@ -7,7 +7,8 @@ import jax
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
 from ml_collections import config_flags
-from orbax.checkpoint import CheckpointManager, CheckpointManagerOptions, PyTreeCheckpointer
+from orbax.checkpoint import CheckpointManager, CheckpointManagerOptions
+from orbax.checkpoint import args, PyTreeCheckpointer,
 import wandb
 
 from ddprism.corrupted_mnist import datasets
@@ -326,7 +327,8 @@ def run_pcpca(config_pcpca, workdir):
     )
     checkpoint_manager = CheckpointManager(
         os.path.join(workdir, 'checkpoints'), checkpointer,
-        options=checkpoint_options
+        options=checkpoint_options,
+        restore_args=args.PyTreeRestoreArgs(restore_type='host')
     )
     checkpoint_manager.save(0, {'params': params, 'metrics': metrics_dict})
     checkpoint_manager.close()

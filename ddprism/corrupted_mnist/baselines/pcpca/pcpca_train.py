@@ -253,7 +253,12 @@ def run_pcpca(config_pcpca, workdir):
 
     # Load classifier model to compute FCD.
     checkpointer = PyTreeCheckpointer()
-    checkpoint_manager = CheckpointManager(classifier_path, checkpointer)
+    checkpoint_options = CheckpointManagerOptions(
+        enable_async_checkpointing=False
+    )
+    checkpoint_manager = CheckpointManager(
+        classifier_path, checkpointer, options=checkpoint_options
+    )
     classifier_model = image_metrics.CNN()
     classifier_params = checkpoint_manager.restore(
         checkpoint_manager.latest_step()
@@ -337,15 +342,15 @@ def run_pcpca(config_pcpca, workdir):
 def main(_):
     """Run PCPCA analysis of corrupted MNIST digits."""
 
-    config_pcpca = FLAGS.config_pcpca
-    workdir = FLAGS.workdir
+    # Force JAX to use CPU if requested (must be done first)
     cpu_only = FLAGS.cpu_only
-    os.makedirs(workdir, exist_ok=True)
-
-    # Force JAX to use CPU if requested
     if cpu_only:
         jax.config.update('jax_platform_name', 'cpu')
         print('Forcing JAX to use CPU only')
+
+    config_pcpca = FLAGS.config_pcpca
+    workdir = FLAGS.workdir
+    os.makedirs(workdir, exist_ok=True)
 
     print(f'Found devices {jax.devices()}')
     print(f'Working directory: {workdir}')

@@ -31,7 +31,7 @@ flags.DEFINE_string(
 )
 
 @partial(jax.jit, static_argnames=['batch_size'])
-def get_posterior_samples(rng, params, y_enr, batch_size=16):
+def get_posterior_samples(rng, params, y_enr, a_mat, batch_size=16):
     """Compute posterior samples for corrupted MNIST digits.
 
     Args:
@@ -39,7 +39,7 @@ def get_posterior_samples(rng, params, y_enr, batch_size=16):
         params: Dictionary of PCPCA parameters.
         y_enr: Enriched dataset (MNIST digits on top of grass images from
             ImageNet).
-        mnist_amp: Amplitude of MNIST digits in the target dataset.
+        a_mat: Mixing matrix for the observation.
         batch_size: Batch size for processing the target dataset with
         jax.lax.map.
 
@@ -47,26 +47,23 @@ def get_posterior_samples(rng, params, y_enr, batch_size=16):
         Posterior samples for uncorrupted MNIST digits from the target dataset.
 
     """
-    # Mixing matrix A is identity for full resolution grassy MNIST dataset.
-    a_mat = jnp.eye(y_enr.shape[-1])
-
     # Get individual random keys for each posterior sample.
     rng_post = jax.random.split(rng, y_enr.shape[0])
 
     # Helper functions to ensure that the full covariance matrix is only
     # computed on batches.
-    def calculate_posterior(y_enr):
+    def calculate_posterior(y_enr, a_mat):
         return pcpca_utils.calculate_posterior(params, y_enr, a_mat)
     def post_samples(args):
-        rng, y_enr = args
-        mean, sigma_post = calculate_posterior(y_enr)
+        rng, y_enr, a_mat = args
+        mean, sigma_post = calculate_posterior(y_enr, a_mat)
         return (
             jax.random.multivariate_normal(rng, mean, sigma_post)
         )
 
     # Draw posterior samples for the entire dataset.
     post_samples = jax.lax.map(
-        post_samples, (rng_post, y_enr), batch_size=batch_size
+        post_samples, (rng_post, y_enr, a_mat), batch_size=batch_size
     )
     return post_samples
 
@@ -118,19 +115,38 @@ def run_pcpca(config_pcpca, workdir):
         mode=config_pcpca.wandb_kwargs.get('mode', 'disabled')
     )
 
-    # Generate training datasets.
+    # Generate training datasets with downsampling support.
     rng_enr, rng_comp, rng = jax.random.split(rng_mnist, 3)
-    y_enr, _ = datasets.get_corrupted_mnist(
+
+    # Use get_dataset to get A matrices and downsampling support
+    y_enr_all, a_mat_enr, _, _ = datasets.get_dataset(
         rng_enr, grass_amp=1., mnist_amp=config_mnist.mnist_amp,
+        noise=config_grass.sigma_y,
+        downsampling_ratios=config_grass.downsampling_ratios,
+        sample_batch_size=None,
         imagenet_path=imagenet_path, dataset_size=config_mnist.dataset_size,
         zeros_and_ones=True
     )
-    # Add noise to the enriched dataset. Match rng pattern we use in the
-    # get_dataset function.
-    rng_err, _ = jax.random.split(rng_enr)
-    y_enr = y_enr + jax.random.normal(
-        rng_enr, shape=y_enr.shape
-    ) * config_grass.sigma_y
+
+    # Filter to only use non-downsampled data (factor 1.0) for parameter fitting
+    downsampling_ratios = config_grass.downsampling_ratios
+    if 1 not in downsampling_ratios:
+        raise ValueError("Downsampling ratios must include factor 1 (no downsampling)")
+
+    # Calculate how many samples have downsampling factor 1
+    total_samples = 0
+    full_res_samples = 0
+    for factor, ratio in downsampling_ratios.items():
+        num_samples = int(config_mnist.dataset_size * ratio)
+        if factor == 1:
+            full_res_samples = num_samples
+        total_samples += num_samples
+    # Adjust for rounding errors
+    if total_samples != config_mnist.dataset_size:
+        full_res_samples += config_mnist.dataset_size - total_samples
+
+    # Extract only the non-downsampled samples for parameter fitting
+    y_enr = y_enr_all[:full_res_samples]
 
     # Target dataset with uncorrupted mnist digits for computing metrics later
     # on. rng key is irrelevant for this dataset.
@@ -141,40 +157,47 @@ def run_pcpca(config_pcpca, workdir):
 
     # Background dataset with grass only.
     rng_bkg, _, _ = jax.random.split(rng_grass, 3)
-    y_bkg, _ = datasets.get_corrupted_mnist(
+    y_bkg_all, _, _, _ = datasets.get_dataset(
         rng_bkg, grass_amp=1.0, mnist_amp=0.0, imagenet_path=imagenet_path,
+        noise=config_grass.sigma_y,
+        downsampling_ratios=config_grass.downsampling_ratios,
+        sample_batch_size=None,
         dataset_size=config_grass.dataset_size, zeros_and_ones=True
     )
-    # Add noise to the background dataset.
-    rng_err, _ = jax.random.split(rng_bkg)
-    y_bkg = y_bkg + jax.random.normal(
-        rng_err, shape=y_bkg.shape
-    ) * config_grass.sigma_y
+    y_bkg = y_bkg_all[:full_res_samples]
 
     # Normalize the datasets, and subtract the mean of the background dataset
     # from the enriched dataset.
     bkg_mean, bkg_std = jnp.mean(y_bkg, axis=0), jnp.std(y_bkg, axis=0)
     y_enr -= bkg_mean
+    y_enr_all -= bkg_mean  # Also normalize the full dataset for sampling
     enr_mean, enr_std = jnp.mean(y_enr, axis=0), jnp.std(y_enr, axis=0)
     y_enr = (y_enr - enr_mean) / enr_std
+    y_enr_all = (y_enr_all - enr_mean) / enr_std  # Normalize full dataset too
+    y_bkg_all = (y_bkg_all - bkg_mean) / bkg_std
     y_bkg = (y_bkg - bkg_mean) / bkg_std
 
     # Flatten the dataset.
     feat_dim = y_enr.shape[-3] * y_enr.shape[-2] * y_enr.shape[-1]
     y_enr = y_enr.squeeze(-1).reshape(-1, feat_dim)
+    y_enr_all = y_enr_all.squeeze(-1).reshape(-1, feat_dim)
     y_bkg = y_bkg.squeeze(-1).reshape(-1, feat_dim)
+    y_bkg_all = y_bkg_all.squeeze(-1).reshape(-1, feat_dim)
 
-    # Fit PCPCA
+    # Flatten A matrices
+    a_mat_enr = a_mat_enr.squeeze(1).reshape(-1, feat_dim, feat_dim)
+
+    # Fit PCPCA using only non-downsampled data
     params = pcpca_utils.mle_params(
         y_enr, y_bkg, config_pcpca.gamma, config_pcpca.latent_dim,
         sigma=config_grass.sigma_y
     )
     params['mu'] = jnp.zeros(params['mu'].shape) # Zero mean enforced.
 
-    # Get the posterior samples for MNIST digits.
+    # Get the posterior samples for MNIST digits using all data with proper A matrices.
     rng_post, rng = jax.random.split(rng, 2)
     post_samples  = get_posterior_samples(
-        rng_post, params, y_enr
+        rng_post, params, y_enr_all, a_mat_enr
     )
     # Reshape and unnormalize the posterior samples.
     post_samples = post_samples.reshape(-1, 28, 28, 1)
@@ -196,17 +219,19 @@ def run_pcpca(config_pcpca, workdir):
     prior_samples /= config_mnist.mnist_amp
 
     # Unormalize and reshape the enriched dataset for plotting.
-    y_enr = y_enr.reshape(-1, 28, 28, 1)
-    y_enr = y_enr * enr_std + enr_mean
-    y_enr += bkg_mean
+    y_enr_plot = y_enr_all.reshape(-1, 28, 28, 1)
+    y_enr_plot = y_enr_plot * enr_std + enr_mean
+    y_enr_plot += bkg_mean
 
-    # Plot the first few prior and posterior samples.
-    n_cols = 5
+    # Plot the first few prior and posterior samples for each downsampling
+    # factor.
+    n_cols = 6
     fig, axs = plt.subplots(3, n_cols)
+    indices = [0,1,4609,4610,9217,9218]
     for col in range(n_cols):
-        axs[0, col].imshow(post_samples[col], vmin=0.0, vmax=1.0)
-        axs[1, col].imshow(mnist_target[col], vmin=0.0, vmax=1.0)
-        axs[2, col].imshow(y_enr[col], vmin=0.0, vmax=1.0)
+        axs[0, col].imshow(post_samples[indices[col]], vmin=0.0, vmax=1.0)
+        axs[1, col].imshow(mnist_target[indices[col]], vmin=0.0, vmax=1.0)
+        axs[2, col].imshow(y_enr_plot[indices[col]], vmin=0.0, vmax=1.0)
     wandb.log(
         {f'posterior samples': wandb.Image(fig)},
         commit=False

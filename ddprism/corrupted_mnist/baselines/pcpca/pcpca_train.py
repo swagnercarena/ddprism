@@ -170,13 +170,6 @@ def run_pcpca(config_pcpca, workdir):
     )
     y_bkg = y_bkg_all[:full_res_samples]
 
-    # Get mnist classifier model and params.
-    rng_class, rng = jax.random.split(rng)
-    mnist_model, mnist_params = image_metrics.get_model(
-        FLAGS.mnist_classifier_path, rng_class,
-        **config_mnist.get('mnist_classifier_kwargs', {})
-    )
-
     # Normalize the datasets, and subtract the mean of the background dataset
     # from the enriched dataset.
     bkg_mean, bkg_std = jnp.mean(y_bkg, axis=0), jnp.std(y_bkg, axis=0)
@@ -259,15 +252,30 @@ def run_pcpca(config_pcpca, workdir):
     # Compute and log metrics.
     metrics_dict = {}
 
+    # Load classifier model to compute FCD.
+    checkpointer = PyTreeCheckpointer()
+    checkpoint_options = CheckpointManagerOptions(
+        enable_async_checkpointing=False
+    )
+    checkpoint_manager = CheckpointManager(
+        classifier_path, checkpointer, options=checkpoint_options,
+        restore_args=args.PyTreeRestoreArgs(restore_type='host')
+    )
+    classifier_model = image_metrics.CNN()
+    classifier_params = checkpoint_manager.restore(
+        checkpoint_manager.latest_step()
+    )['params']
+    checkpoint_manager.close()
+
     # Compute FCD on posterior and prior samples.
     fcd_post = image_metrics.fcd_mnist(
-        mnist_model, mnist_params,
+        classifier_model, classifier_params,
         mnist_target[:config_mnist.fcd_samples],
         post_samples[:config_mnist.fcd_samples]
     )
     metrics_dict['fcd_post'] = float(fcd_post)
     fcd_prior = image_metrics.fcd_mnist(
-        mnist_model, mnist_params,
+        classifier_model, classifier_params,
         mnist_target[:config_mnist.fcd_samples],
         prior_samples[:config_mnist.fcd_samples]
     )

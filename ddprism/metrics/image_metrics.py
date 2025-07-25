@@ -114,7 +114,7 @@ def train_mnist_classifier(
         apply_fn=model.apply, params=params['params'], tx=tx
     )
 
-    for _ in range(num_epochs):
+    for epoch in range(num_epochs):
         for _ in range(len(x_train) // batch_size):
             # Get batch.
             rng, rng_batch = jax.random.split(rng)
@@ -131,6 +131,7 @@ def train_mnist_classifier(
         # Report the statistics.
         logits = state.apply_fn({'params': state.params}, x_test[..., None])
         accuracy = jnp.mean(jnp.argmax(logits, -1) == y_test)
+        print(f'Epoch {epoch} accuracy: {accuracy:.3f}')
     print(f'Model training complete with final accuracy {accuracy:.3f}')
     params = {'params': state.params}
     return params

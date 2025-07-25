@@ -21,7 +21,7 @@ from ddprism import training_utils
 from ddprism import utils
 
 import datasets
-from ddprism.metrics import image_metrics as metrics
+from ddprism.metrics import metrics
 
 FLAGS = flags.FLAGS
 flags.DEFINE_string('workdir', None, 'working directory.')
@@ -142,7 +142,7 @@ def main(_):
             N=config.sample_batch_size, M=jax.device_count()
         )
 
-        # Get pure samples for Gaussian initialization and metric calculations.
+        # Get pure samples for metric calculations.
         grass_pure, _ = datasets.get_corrupted_mnist(
             rng_comp, 1.0, 0.0, imagenet_path, config.dataset_size
         )
@@ -198,7 +198,7 @@ def main(_):
     print('Initial EM Gaussian fit.')
     for lap in tqdm(range(config.gaussian_em_laps), desc='EM Lap'):
         rng_samp, rng = jax.random.split(rng)
-        rng_samp = jax.jax.random.split(
+        rng_samp = jax.random.split(
             rng_samp, (grass_obs.shape[0], jax.device_count())
         )
         # Loop over the sampling batches, saving the outputs to cpu to avoid
@@ -223,7 +223,7 @@ def main(_):
         # Ge the statistics of the seperate grass sample.
         rng_ppca, rng = jax.random.split(rng)
         grass_mean, grass_cov = utils.ppca(rng_ppca, x_post, rank=2)
-        post_state_params['denoiser_models_0']['mean_x'] = grass_mean
+        post_state_params['denoiser_models_0']['mu_x'] = grass_mean
         post_state_params['denoiser_models_0']['cov_x'] = grass_cov
 
     # Save our initial samples.
@@ -232,20 +232,34 @@ def main(_):
     checkpoint_manager.save(0, ckpt, save_kwargs={'save_args': save_args})
     checkpoint_manager.wait_until_finished()
 
-    # Log our initial pq mass chi^2.
-    wandb.log(
-        {
-            'pq_chi2': metrics.pq_mass(
-                x_post[:config.pq_mass_samples],
-                grass_pure[:config.pq_mass_samples]
-            ),
-            'pq_chi2_ident': metrics.pq_mass(
-                x_post[:config.pq_mass_samples],
-                grass_pure_ident[:config.pq_mass_samples]
-            )
-        },
-        step=0
+    # Calculate the PSNR of the initial samples.
+    metrics_dict = {}
+    metrics_dict['psnr'] = metrics.psnr(
+        x_post[:config.psnr_samples], grass_pure_ident[:config.psnr_samples],
+        max_spread=datasets.MAX_SPREAD
     )
+    # Calculate the pqmass of our posterior samples.
+    metrics_dict['pmass'] = metrics.pq_mass(
+        x_post[:config.pq_mass_samples],
+        grass_pure[:config.pq_mass_samples]
+    )
+    metrics_dict['pqmass_ident'] = metrics.pq_mass(
+        x_post[:config.pq_mass_samples],
+        grass_pure_ident[:config.pq_mass_samples]
+    )
+    # Compute the sinkhorn divergence of our posterior samples.
+    metrics_dict['sinkhorn_div'] = metrics.sinkhorn_divergence(
+        x_post[:config.sinkhorn_div_samples],
+        grass_pure[:config.sinkhorn_div_samples]
+    )
+    metrics_dict['sinkhorn_div_ident'] = metrics.sinkhorn_divergence(
+        x_post.reshape(x_post.shape[0], -1)[:config.sinkhorn_div_samples],
+        grass_pure_ident.reshape(
+            grass_pure_ident.shape[0], -1
+        )[:config.sinkhorn_div_samples]
+    )
+
+    wandb.log(metrics_dict, commit=False)
 
     # Initialize our state and posterior state.
     rng_state, rng = jax.random.split(rng, 2)
@@ -308,7 +322,7 @@ def main(_):
 
         # Generate new posterior samples with our model.
         rng_samp, rng = jax.random.split(rng)
-        rng_samp = jax.jax.random.split(
+        rng_samp = jax.random.split(
             rng_samp, (grass_obs.shape[0], jax.device_count())
         )
         x_post = []

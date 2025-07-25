@@ -171,8 +171,9 @@ def run_pcpca(config_pcpca, workdir):
     y_bkg = y_bkg_all[:full_res_samples]
 
     # Get mnist classifier model and params.
+    rng_class, rng = jax.random.split(rng)
     mnist_model, mnist_params = image_metrics.get_model(
-        FLAGS.mnist_classifier_path, rng_class,
+        classifier_path, rng_class,
         **config_mnist.get('mnist_classifier_kwargs', {})
     )
 

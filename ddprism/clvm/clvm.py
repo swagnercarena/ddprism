@@ -123,32 +123,7 @@ class clvmVAE(clvmLinear):
         # Compute expected values of the target and background datasets.
         x = self.vae_z.decode(zx, a_mat_x) + self.vae_t.decode(tx, a_mat_x)
         y = self.vae_z.decode(zy, a_mat_y)
-
-        '''
-        if a_mat is not None:
-            x = a_mat_x @ x
-            y = a_mat_y @ y
-        '''
         return x, y
-    '''
-    def denoise_samples(
-        self, rng: Array, x: Array, a_mat_x: Optional[Array] = None, 
-    ) -> Array:
-        
-        rng_tx, rng = jax.random.split(rng, 2)
-        
-        # Compute mean and std for the target signal.
-        mu_tx, log_sigma_tx = self.vae_t.encode(x, a_mat_x)
-        
-        # Sample latent variables corresponding to the enriched signal in the target dataset.
-        eps_tx = jax.random.normal(rng_tx, shape=x.shape[:-1] + (self.vae_t.latent_dim,))
-        tx = mu_tx + jnp.exp(log_sigma_tx) * eps_tx
-
-        # Compute expected values of the target signal; 
-        # a_mat_x is not applied since we are interested in the underlying signal.
-        x_denoised = self.vae_t.decode(tx,)
-        return x_denoised
-    '''
     
     def denoise_samples(
         self, rng: Array, x: Array, a_mat_x: Optional[Array] = None, dset = 'target'
@@ -161,15 +136,32 @@ class clvmVAE(clvmLinear):
         elif dset == 'background':
             vae = self.vae_z
         
-        # Compute mean and std for the target signal.
+        # Compute mean and std for the signal.
         mu_tx, log_sigma_tx = vae.encode(x, a_mat_x)
         
-        # Sample latent variables corresponding to the enriched signal in the target dataset.
+        # Sample latent variables corresponding to the signal.
         eps_tx = jax.random.normal(rng_tx, shape=x.shape[:-1] + (vae.latent_dim,))
         tx = mu_tx + jnp.exp(log_sigma_tx) * eps_tx
 
-        # Compute expected values of the target signal; 
-        # a_mat_x is not applied since we are interested in the underlying signal.
+        # Compute expected values of the signal; a_mat_x is not applied since we are interested in the underlying signal.
+        x_denoised = vae.decode(tx,)
+        return x_denoised
+
+    def draw_prior_samples(
+        self, rng: Array, shape: Tuple, dset = 'target'
+    ) -> Array:
+        
+        rng_tx, rng = jax.random.split(rng, 2)
+        
+        if dset == 'target':
+            vae = self.vae_t
+        elif dset == 'background':
+            vae = self.vae_z
+        
+        # Sample latent variables corresponding to the signal of interest.
+        tx = jax.random.normal(rng_tx, shape=shape + (vae.latent_dim,))
+
+        # Compute expected values of the signal.
         x_denoised = vae.decode(tx,)
         return x_denoised
 

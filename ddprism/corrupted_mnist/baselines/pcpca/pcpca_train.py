@@ -8,7 +8,7 @@ import jax.numpy as jnp
 import matplotlib.pyplot as plt
 from ml_collections import config_flags
 from orbax.checkpoint import CheckpointManager, CheckpointManagerOptions
-from orbax.checkpoint import args, PyTreeCheckpointer,
+from orbax.checkpoint import args, PyTreeCheckpointer
 import wandb
 
 from ddprism.corrupted_mnist import datasets

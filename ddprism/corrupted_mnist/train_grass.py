@@ -158,8 +158,7 @@ def main(_):
     A_mat = jax_utils.replicate(A_mat)
     cov_y = jax_utils.replicate(cov_y)
 
-    # Initialize our Gaussian state with rough mean and covariance of grass
-    # dataset and use for initial posterior sample.
+    # Initialize our Gaussian state.
     rng_state, rng = jax.random.split(rng)
     post_state_gauss = create_posterior_train_state(
         rng_state, config, image_shape, gaussian=True
@@ -169,7 +168,6 @@ def main(_):
     # Prepare post_state_gauss for pmap.
     post_state_gauss = jax_utils.replicate(post_state_gauss)
 
-    # Create our sampling function. We want to pmap it, but we also have to
     # Create our sampling function. We want to pmap it, but we also have to
     # batch to avoid memory issues. Start with the pmapped call to sample.
     def sample(

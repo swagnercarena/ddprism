@@ -188,7 +188,7 @@ def run_pcpca(config_pcpca, workdir):
     y_bkg_all = y_bkg_all.squeeze(-1).reshape(-1, feat_dim)
 
     # Flatten A matrices
-    a_mat_enr = a_mat_enr.squeeze(1).reshape(-1, feat_dim, feat_dim)
+    a_mat_enr = a_mat_enr[:,0].reshape(-1, feat_dim, feat_dim)
 
     # Fit PCPCA using only non-downsampled data
     params = pcpca_utils.mle_params(

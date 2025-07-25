@@ -481,7 +481,7 @@ def main(_):
         if config.get('sampling_mask', True):
             x_post_all = _sample_wrapper(
                 rng_sample, x_post, post_state, state_list, variables, config,
-                mask_override=False
+                mask_override=True
             )
         else:
             x_post_all = x_post

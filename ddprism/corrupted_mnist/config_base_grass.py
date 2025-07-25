@@ -27,14 +27,18 @@ def get_config():
     config.post_rtol = 1e-3
     config.post_maxiter = 1
     config.post_use_dplr = True
+    config.post_safe_divide = 1e-6
+    config.post_regularization = 1e-6
+    config.post_error_threshold = 5e-1
 
     # Training parameters.
     config.lr_init_val = 1e-3
     config.epochs = 4096
-    config.em_laps = 192
+    config.use_dynamic = False
+    config.em_laps = 64
     config.gaussian_em_laps = 32
     config.batch_size = 1920
-    config.ema_decay = 0.9999
+    config.ema_decay = 0.999
     config.grad_clip_norm = 1.0
     config.optimizer = ConfigDict({
         'type': 'adam',
@@ -56,10 +60,16 @@ def get_config():
 
     # Sampling arguments
     config.sampling_kwargs = ConfigDict(
-        {'steps': 256, 'sampler': 'pc', 'corrections': 1, 'tau': 1e-2}
+        {
+            'steps': 256, 'sampler': 'pc', 'corrections': 1, 'tau': 1e-2,
+            'clip_method': 'none'
+        }
     )
     config.gaussian_sampling_kwargs = ConfigDict(
-        {'steps': 16, 'sampler': 'pc', 'corrections': 1, 'tau': 1e-2}
+        {
+            'steps': 16, 'sampler': 'pc', 'corrections': 1, 'tau': 1e-2,
+            'clip_method': 'none'
+        }
     )
     config.sample_batch_size = 128
 

@@ -20,6 +20,9 @@ FLAGS = flags.FLAGS
 
 flags.DEFINE_string('workdir', None, 'working directory.')
 flags.DEFINE_string('imagenet_path', None, 'path to imagenet grass dataset.')
+flags.DEFINE_bool(
+    'cpu_only', False, 'Force JAX to use CPU only (helps with memory issues).'
+)
 
 config_flags.DEFINE_config_file(
     'config_pcpca', None,
@@ -336,7 +339,13 @@ def main(_):
 
     config_pcpca = FLAGS.config_pcpca
     workdir = FLAGS.workdir
+    cpu_only = FLAGS.cpu_only
     os.makedirs(workdir, exist_ok=True)
+
+    # Force JAX to use CPU if requested
+    if cpu_only:
+        jax.config.update('jax_platform_name', 'cpu')
+        print('Forcing JAX to use CPU only')
 
     print(f'Found devices {jax.devices()}')
     print(f'Working directory: {workdir}')

@@ -16,6 +16,7 @@ from ddprism import linalg
 DEFAULT_IMAGENET_PATH = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), 'grass_jpeg/'
 )
+MAX_SPREAD = 1.0
 
 
 def get_raw_mnist_images() -> ndarray:

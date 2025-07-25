@@ -1,5 +1,5 @@
 """Basic configuration for the variable mixing matrix problem."""
-import config_base_mnist
+from ddprism.corrupted_mnist import config_base_mnist
 
 
 def get_config():

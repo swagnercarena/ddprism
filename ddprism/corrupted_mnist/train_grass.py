@@ -107,33 +107,33 @@ def compute_metrics(
             grass_pure_ident.shape[0], -1
         )
 
-    metrics_dict = {}
-    metrics_dict[f'psnr_{dist}'] = metrics.psnr(
-        x_samples[:config.psnr_samples], grass_pure_ident[:config.psnr_samples],
-        max_spread=datasets.MAX_SPREAD
-    )
-    # Calculate the pqmass of our samples.
-    metrics_dict[f'pqmass_{dist}'] = metrics.pq_mass(
-        x_samples[:config.pq_mass_samples],
-        grass_pure[:config.pq_mass_samples]
-    )
-    metrics_dict[f'pqmass_ident_{dist}'] = metrics.pq_mass(
-        x_samples[:config.pq_mass_samples],
-        grass_pure_ident[:config.pq_mass_samples]
-    )
-    # Compute the sinkhorn divergence of our samples.
-    metrics_dict[f'divergence_{dist}'] = metrics.sinkhorn_divergence(
-        x_samples[:config.sinkhorn_div_samples],
-        grass_pure[:config.sinkhorn_div_samples]
-    )
-    metrics_dict[f'divergence_ident_{dist}'] = metrics.sinkhorn_divergence(
-        x_samples.reshape(x_samples.shape[0], -1)[:config.sinkhorn_div_samples],
-        grass_pure_ident.reshape(
-            grass_pure_ident.shape[0], -1
-        )[:config.sinkhorn_div_samples]
-    )
+        metrics_dict = {}
+        metrics_dict[f'psnr_{dist}'] = metrics.psnr(
+            x_samples[:config.psnr_samples], grass_pure_ident[:config.psnr_samples],
+            max_spread=datasets.MAX_SPREAD
+        )
+        # Calculate the pqmass of our samples.
+        metrics_dict[f'pqmass_{dist}'] = metrics.pq_mass(
+            x_samples[:config.pq_mass_samples],
+            grass_pure[:config.pq_mass_samples]
+        )
+        metrics_dict[f'pqmass_ident_{dist}'] = metrics.pq_mass(
+            x_samples[:config.pq_mass_samples],
+            grass_pure_ident[:config.pq_mass_samples]
+        )
+        # Compute the sinkhorn divergence of our samples.
+        metrics_dict[f'divergence_{dist}'] = metrics.sinkhorn_divergence(
+            x_samples[:config.sinkhorn_div_samples],
+            grass_pure[:config.sinkhorn_div_samples]
+        )
+        metrics_dict[f'divergence_ident_{dist}'] = metrics.sinkhorn_divergence(
+            x_samples.reshape(x_samples.shape[0], -1)[:config.sinkhorn_div_samples],
+            grass_pure_ident.reshape(
+                grass_pure_ident.shape[0], -1
+            )[:config.sinkhorn_div_samples]
+        )
 
-    return metrics_dict
+        return metrics_dict
 
 def main(_):
     """Train a joint posterior denoiser."""

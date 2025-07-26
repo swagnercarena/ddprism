@@ -62,9 +62,8 @@ def create_posterior_train_state(
     gaussian=False
 ):
     "Create joint posterior denoiser."
-    learning_rate_fn = optax.cosine_decay_schedule(
-        init_value=config.lr_init_val,
-        decay_steps=config.epochs * config.em_laps
+    learning_rate_fn = training_utils.get_learning_rate_schedule(
+        config, config.lr_init_val, config.epochs
     )
 
     denoiser_models = [
@@ -96,7 +95,10 @@ def create_posterior_train_state(
     if cov_x is not None:
         params['params']['denoiser_models_1']['cov_x'] = cov_x
 
-    tx = optax.adam(learning_rate_fn)
+    # Use the new configurable optimizer
+    optimizer = training_utils.get_optimizer(config)(learning_rate_fn)
+    grad_clip_norm = config.get('grad_clip_norm', 1.0)
+    tx = optax.chain(optax.clip_by_global_norm(grad_clip_norm), optimizer)
 
     return train_state.TrainState.create(
         apply_fn=posterior_denoiser.apply, params=params['params'], tx=tx
@@ -170,7 +172,7 @@ def main(_):
 
         # Get pure samples for Gaussian initialization and metric calculations.
         mnist_pure, _ = datasets.get_corrupted_mnist(
-            rng_comp, 0.0, 1.0, imagenet_path, config.dataset_size
+            rng_dataset, 0.0, 1.0, imagenet_path, config.dataset_size
         )
         image_shape = mnist_pure.shape[1:]
 
@@ -230,6 +232,7 @@ def main(_):
         axis_name='batch'
     )
 
+    
     print('Initial EM Gaussian fit.')
     for lap in tqdm(range(config.gaussian_em_laps), desc='EM Lap'):
         rng_samp, rng = jax.random.split(rng)
@@ -262,7 +265,7 @@ def main(_):
         )
         x_post = jnp.split(x_post, 2, axis=-1)
 
-        # Get the statistics of the seperate mnist sample.
+        # Get the statistics of the separate mnist sample.
         rng_ppca, rng = jax.random.split(rng)
         mnist_mean, mnist_cov = utils.ppca(rng_ppca, x_post[1], rank=4)
         post_state_params['denoiser_models_1']['mean_x'] = mnist_mean
@@ -308,8 +311,8 @@ def main(_):
 
     # Initialize our state and posterior state.
     rng_state, rng = jax.random.split(rng, 2)
-    learning_rate_fn = optax.cosine_decay_schedule(
-        init_value=config.lr_init_val, decay_steps=config.epochs
+    learning_rate_fn = training_utils.get_learning_rate_schedule(
+        config, config.lr_init_val, config.epochs
     )
     state_unet = training_utils.create_train_state_unet(
         rng_state, config, learning_rate_fn, image_shape

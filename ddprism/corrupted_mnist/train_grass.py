@@ -17,9 +17,9 @@ from tqdm import tqdm
 import wandb
 
 from ddprism import diffusion
-from ddprism.metrics import metrics
 from ddprism import training_utils
 from ddprism import utils
+from ddprism.metrics import metrics
 
 import datasets
 
@@ -110,7 +110,7 @@ def compute_metrics(
         max_spread=datasets.MAX_SPREAD
     )
     # Calculate the pqmass of our samples.
-    metrics_dict[f'pmass_{dist}'] = metrics.pq_mass(
+    metrics_dict[f'pqmass_{dist}'] = metrics.pq_mass(
         x_samples[:config.pq_mass_samples],
         grass_pure[:config.pq_mass_samples]
     )

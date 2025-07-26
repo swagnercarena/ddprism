@@ -80,7 +80,7 @@ def get_config():
 
     # wandb parameters
     config.wandb_kwargs = ConfigDict(
-        {'project': 'mvss-mnist', 'mode': 'online', 'run_name': None}
+        {'project': 'mnist-cont', 'mode': 'online', 'run_name': None}
     )
 
     return config

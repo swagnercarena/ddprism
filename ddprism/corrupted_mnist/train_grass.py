@@ -17,11 +17,12 @@ from tqdm import tqdm
 import wandb
 
 from ddprism import diffusion
+from ddprism.metrics import metrics
 from ddprism import training_utils
 from ddprism import utils
 
 import datasets
-from ddprism.metrics import metrics
+
 
 FLAGS = flags.FLAGS
 flags.DEFINE_string('workdir', None, 'working directory.')
@@ -70,7 +71,10 @@ def create_posterior_train_state(
     posterior_denoiser = diffusion.PosteriorDenoiserJoint(
         denoiser_models=denoiser_models, y_features=feat_dim,
         rtol=config.post_rtol, maxiter=config.post_maxiter,
-        use_dplr=config.post_use_dplr
+        use_dplr=config.post_use_dplr,
+        safe_divide=config.get('post_safe_divide', 1e-32),
+        regularization=config.get('post_regularization', 0.0),
+        error_threshold=config.get('post_error_threshold', None)
     )
 
     # Initialize posterior denoiser.
@@ -91,14 +95,15 @@ def create_posterior_train_state(
         apply_fn=posterior_denoiser.apply, params=params['params'], tx=tx
     )
 
-def compute_metrics(config, x_samples, grass_pure, grass_pure_ident, dist='post'):
-    # Reshape grass samples
+
+def compute_metrics(
+    config, x_samples, grass_pure, grass_pure_ident, dist='post'
+):
+    """Compute metrics for the posterior or prior samples."""
+    # All of the grass metrics want flattened samples.
     grass_pure = grass_pure.reshape(grass_pure.shape[0], -1)
     grass_pure_ident = grass_pure_ident.reshape(grass_pure_ident.shape[0], -1)
 
-    grass_pure = jax.device_put(grass_pure, jax.local_devices(backend="cpu")[0])
-    grass_pure_ident = jax.device_put(grass_pure_ident, jax.local_devices(backend="cpu")[0])
-    
     metrics_dict = {}
     metrics_dict[f'psnr_{dist}'] = metrics.psnr(
         x_samples[:config.psnr_samples], grass_pure_ident[:config.psnr_samples],
@@ -114,19 +119,19 @@ def compute_metrics(config, x_samples, grass_pure, grass_pure_ident, dist='post'
         grass_pure_ident[:config.pq_mass_samples]
     )
     # Compute the sinkhorn divergence of our samples.
-    metrics_dict[f'sinkhorn_div_{dist}'] = metrics.sinkhorn_divergence(
+    metrics_dict[f'divergence_{dist}'] = metrics.sinkhorn_divergence(
         x_samples[:config.sinkhorn_div_samples],
         grass_pure[:config.sinkhorn_div_samples]
     )
-    metrics_dict[f'sinkhorn_div_ident_{dist}'] = metrics.sinkhorn_divergence(
+    metrics_dict[f'divergence_ident_{dist}'] = metrics.sinkhorn_divergence(
         x_samples.reshape(x_samples.shape[0], -1)[:config.sinkhorn_div_samples],
         grass_pure_ident.reshape(
             grass_pure_ident.shape[0], -1
         )[:config.sinkhorn_div_samples]
     )
-    
+
     return metrics_dict
-    
+
 def main(_):
     """Train a joint posterior denoiser."""
     config = FLAGS.config
@@ -230,18 +235,20 @@ def main(_):
 
     # Create a similar sampling function for the prior.
     def sample_prior(
-        rng, state_local, params_local, image_shape,
-        sample_batch_size, sampling_kwargs
+        rng, state_local, params_local, image_shape, sample_batch_size,
+        sampling_kwargs
     ):
         return utils.sample(
-            rng, state_local, {'params': params_local,},
+            rng, state_local, {'params': params_local},
             sample_shape=(sample_batch_size,),
             feature_shape=image_shape[0] * image_shape[1] * image_shape[2],
             **sampling_kwargs
         )
-
-    n_prior_samples = max(config.sinkhorn_div_samples, config.pq_mass_samples, config.psnr_samples, config.fcd_samples)
-    k = n_prior_samples // (config.sample_batch_size * jax.device_count())
+    # Only sample as much as we need for the metrics.
+    n_prior_samples = max(
+        config.sinkhorn_div_samples, config.pq_mass_samples,
+        config.psnr_samples, config.fcd_samples
+    )
 
     print('Initial EM Gaussian fit.')
     for lap in tqdm(range(config.gaussian_em_laps), desc='EM Lap'):
@@ -274,7 +281,9 @@ def main(_):
         post_state_params['denoiser_models_0']['mu_x'] = grass_mean
         post_state_params['denoiser_models_0']['cov_x'] = grass_cov
 
-    metrics_dict = compute_metrics(config, x_post, grass_pure, grass_pure_ident, dist='post')
+    metrics_dict = compute_metrics(
+        config, x_post, grass_pure, grass_pure_ident, dist='post'
+    )
     wandb.log(metrics_dict, commit=False)
 
     # Initialize our state and posterior state.
@@ -295,7 +304,8 @@ def main(_):
     # Create the apply_model function with config
     apply_model = apply_model_with_config(config)
 
-    # Change the sampling parameters to those for the diffusion model.
+    # Change the sampling parameters to those for the diffusion model, and set
+    # the prior sampling parameters.
     sample_pmap = jax.pmap(
         functools.partial(
             sample, image_shape=image_shape,
@@ -304,8 +314,6 @@ def main(_):
         ),
         axis_name='batch'
     )
-
-    # Similarly, hange sampling parameters for prior samples.
     sample_prior_pmap = jax.pmap(
         functools.partial(
             sample_prior, image_shape=image_shape,
@@ -342,8 +350,7 @@ def main(_):
                 )
             )
             wandb.log(
-                {'loss_state': jax_utils.unreplicate(loss)},
-                step=(lap * config.epochs + epoch)
+                {'loss_state': jax_utils.unreplicate(loss)}
             )
 
         # Generate new posterior samples with our model.
@@ -373,44 +380,44 @@ def main(_):
             config, x_post, grass_pure, grass_pure_ident, dist='post'
         )
         wandb.log(
-            metrics_dict_post, step=(lap * config.epochs + epoch)
+            metrics_dict_post, commit=False
         )
 
-        # Generate prior samples with our model.
-        x_prior = []
-        params = jax_utils.replicate({'params': state_unet.params})
-        
+        # Calculate number of batches needed for prior samples
+        batches = (
+            n_prior_samples // (config.sample_batch_size * jax.device_count())
+        )
         rng_samp, rng = jax.random.split(rng)
-        rng_samp = jax.random.split(rng_samp, (k, jax.device_count()))
+        rng_samp = jax.random.split(rng_samp, (batches, jax.device_count()))
+        x_prior = []
         for rng_pmap in rng_samp:
             x_prior.append(
                 jax.device_put(
                     sample_prior_pmap(
-                            rng_pmap, state_unet, params,
+                        rng_pmap, state_unet, params['denoiser_models_0']
                     ),
                     jax.local_devices(backend="cpu")[0]
                 )
             )
-        # No longer need sampling dimensions for prior samples.
+
+        # Calculate the metrics on the prior samples and log.
         x_prior = rearrange(
             jnp.stack(x_prior, axis=0), 'K M N ... -> (K M N) ...'
         )
-        
-        # Calculate and log metrics for our prior sample.
         metrics_dict_prior = compute_metrics(
             config, x_prior, grass_pure, grass_pure_ident, dist='prior'
         )
         wandb.log(
-            metrics_dict_prior, step=(lap * config.epochs + epoch)
+            metrics_dict_prior, commit=False
         )
-        
+
         # Save the state, ema, and some samples.
         ckpt = {
             'state': jax.device_get(jax_utils.unreplicate(state_unet)),
             'x_post': jax.device_get(x_post), 'x_prior': jax.device_get(x_prior),
             'ema_params': jax.device_get(ema.params), 'config': config.to_dict(),
             'metrics_post': metrics_dict_post, 'metrics_prior': metrics_dict_prior
-            
+
         }
         save_args = orbax_utils.save_args_from_target(ckpt)
         checkpoint_manager.save(

@@ -101,8 +101,11 @@ def compute_metrics(
 ):
     """Compute metrics for the posterior or prior samples."""
     # All of the grass metrics want flattened samples.
-    grass_pure = grass_pure.reshape(grass_pure.shape[0], -1)
-    grass_pure_ident = grass_pure_ident.reshape(grass_pure_ident.shape[0], -1)
+    with jax.default_device(jax.local_devices(backend="cpu")[0]):
+        grass_pure = grass_pure.reshape(grass_pure.shape[0], -1)
+        grass_pure_ident = grass_pure_ident.reshape(
+            grass_pure_ident.shape[0], -1
+        )
 
     metrics_dict = {}
     metrics_dict[f'psnr_{dist}'] = metrics.psnr(
@@ -400,16 +403,7 @@ def main(_):
                 )
             )
 
-        # Calculate the metrics on the prior samples and log.
-        x_prior = rearrange(
-            jnp.stack(x_prior, axis=0), 'K M N ... -> (K M N) ...'
-        )
-        metrics_dict_prior = compute_metrics(
-            config, x_prior, grass_pure, grass_pure_ident, dist='prior'
-        )
-        wandb.log(
-            metrics_dict_prior, commit=False
-        )
+ v
 
         # Save the state, ema, and some samples.
         ckpt = {

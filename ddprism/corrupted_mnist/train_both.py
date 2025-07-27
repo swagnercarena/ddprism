@@ -122,17 +122,17 @@ def compute_metrics(
                 grass_pure_ident.shape[0], -1
             )
             metrics_dict[f'grass_psnr_{dist}'] = metrics.psnr(
-                x_samples[0, :config.psnr_samples],
+                x_samples[0][:config.psnr_samples],
                 grass_pure_ident[:config.psnr_samples],
                 max_spread=datasets.MAX_SPREAD
             )
             metrics_dict[f'grass_pqmass_{dist}'] = metrics.pq_mass(
-                x_samples[0, :config.pq_mass_samples],
+                x_samples[0][:config.pq_mass_samples],
                 grass_pure_ident[:config.pq_mass_samples]
             )
             metrics_dict[f'grass_divergence_{dist}'] = (
                 metrics.sinkhorn_divergence(
-                    x_samples[0, :config.sinkhorn_div_samples],
+                    x_samples[0][:config.sinkhorn_div_samples],
                     grass_pure_ident[:config.sinkhorn_div_samples]
                 )
             )
@@ -143,7 +143,7 @@ def compute_metrics(
         metrics_dict[f'mnist_fcd_{dist}'] = image_metrics.fcd_mnist(
             mnist_model, mnist_params,
             rearrange(
-                x_samples[1, :config.pq_mass_samples],
+                x_samples[1][:config.pq_mass_samples],
                 '... (H W C) -> ... H W C',
                 H=image_shape[0], W=image_shape[1], C=image_shape[2]
             ),
@@ -151,21 +151,20 @@ def compute_metrics(
         )
         mnist_pure = mnist_pure.reshape(mnist_pure.shape[0], -1)
         metrics_dict[f'mnist_pqmass_{dist}'] = metrics.pq_mass(
-            x_samples[1, :config.pq_mass_samples],
+            x_samples[1][:config.pq_mass_samples],
             mnist_pure[:config.pq_mass_samples]
         )
         metrics_dict[f'mnist_divergence_{dist}'] = metrics.sinkhorn_divergence(
-            x_samples[1, :config.sinkhorn_div_samples],
+            x_samples[1][:config.sinkhorn_div_samples],
             mnist_pure[:config.sinkhorn_div_samples]
         )
         metrics_dict[f'mnist_psnr_{dist}'] = metrics.psnr(
-            x_samples[1, :config.psnr_samples],
+            x_samples[1][:config.psnr_samples],
             mnist_pure[:config.psnr_samples],
             max_spread=datasets.MAX_SPREAD
         )
 
         return metrics_dict
-
 
 def main(_):
     """Train a joint posterior denoiser."""

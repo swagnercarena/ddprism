@@ -123,14 +123,14 @@ def compute_metrics(
         )
         # Compute the sinkhorn divergence of our samples.
         metrics_dict[f'divergence_{dist}'] = metrics.sinkhorn_divergence(
-            x_samples[:100], #[:config.sinkhorn_div_samples],
-            grass_pure[:100]#[:config.sinkhorn_div_samples]
+            x_samples[:config.sinkhorn_div_samples],
+            grass_pure[[:config.sinkhorn_div_samples]
         )
         metrics_dict[f'divergence_ident_{dist}'] = metrics.sinkhorn_divergence(
-            x_samples.reshape(x_samples.shape[0], -1)[:100], #[:config.sinkhorn_div_samples],
+            x_samples.reshape(x_samples.shape[0], -1)[:config.sinkhorn_div_samples],
             grass_pure_ident.reshape(
                 grass_pure_ident.shape[0], -1
-            )[:100]#[:config.sinkhorn_div_samples]
+            )[:config.sinkhorn_div_samples]
         )
 
         return metrics_dict

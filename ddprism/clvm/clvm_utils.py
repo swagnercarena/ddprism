@@ -1,5 +1,5 @@
 """Utility functions for PCPCA."""
-from typing import Dict, Optional, Tuple
+from typing import Tuple
 
 from flax import linen as nn
 import jax
@@ -156,7 +156,7 @@ class CLVMLinear(nn.Module):
             obs: Background observation.
         """
         sigma_obs = jnp.exp(self.log_sigma_obs.value)
-        return latent_posterior_from_obs_bkg    (
+        return latent_posterior_from_obs_bkg(
             self.s_mat, self.mu_bkg, obs, sigma_obs, self.a_mat.value
         )
 

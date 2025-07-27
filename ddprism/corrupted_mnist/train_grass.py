@@ -414,14 +414,14 @@ def main(_):
             metrics_dict_prior, commit=False
         )
 
- 
 
         # Save the state, ema, and some samples.
         ckpt = {
             'state': jax.device_get(jax_utils.unreplicate(state_unet)),
             'x_post': jax.device_get(x_post), 'x_prior': jax.device_get(x_prior),
             'ema_params': jax.device_get(ema.params), 'config': config.to_dict(),
-            'metrics_post': metrics_dict_post, 'metrics_prior': metrics_dict_prior
+            'metrics_post': jax.device_get(metrics_dict_post),
+            'metrics_prior': jax.device_get(metrics_dict_prior)
 
         }
         save_args = orbax_utils.save_args_from_target(ckpt)

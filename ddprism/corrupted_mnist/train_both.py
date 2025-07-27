@@ -20,9 +20,9 @@ from ddprism import diffusion
 from ddprism import linalg
 from ddprism import training_utils
 from ddprism import utils
+from ddprism.metrics import metrics, image_metrics
 
 import datasets
-from ddprism.metrics import image_metrics as metrics
 
 FLAGS = flags.FLAGS
 flags.DEFINE_string('workdir', None, 'working directory.')
@@ -83,7 +83,10 @@ def create_posterior_train_state(
     posterior_denoiser = diffusion.PosteriorDenoiserJoint(
         denoiser_models=denoiser_models, y_features=feat_dim * 2,
         rtol=config.post_rtol, maxiter=config.post_maxiter,
-        use_dplr=config.post_use_dplr
+        use_dplr=config.post_use_dplr,
+        safe_divide=config.get('post_safe_divide', 1e-32),
+        regularization=config.get('post_regularization', 0.0),
+        error_threshold=config.get('post_error_threshold', None)
     )
 
     # Initialize posterior denoiser.
@@ -103,6 +106,65 @@ def create_posterior_train_state(
     return train_state.TrainState.create(
         apply_fn=posterior_denoiser.apply, params=params['params'], tx=tx
     )
+
+
+def compute_metrics(
+    config, x_samples, mnist_pure, mnist_model, mnist_params,
+    image_shape, grass_pure_ident = None
+):
+    """Compute metrics for the posterior or prior samples."""
+    with jax.default_device(jax.local_devices(backend="cpu")[0]):
+        metrics_dict = {}
+        # Start with calculation for the posterior grass.
+        if grass_pure_ident is not None:
+            dist = 'post'
+            grass_pure_ident = grass_pure_ident.reshape(
+                grass_pure_ident.shape[0], -1
+            )
+            metrics_dict[f'grass_psnr_{dist}'] = metrics.psnr(
+                x_samples[0, :config.psnr_samples],
+                grass_pure_ident[:config.psnr_samples],
+                max_spread=datasets.MAX_SPREAD
+            )
+            metrics_dict[f'grass_pqmass_{dist}'] = metrics.pq_mass(
+                x_samples[0, :config.pq_mass_samples],
+                grass_pure_ident[:config.pq_mass_samples]
+            )
+            metrics_dict[f'grass_divergence_{dist}'] = (
+                metrics.sinkhorn_divergence(
+                    x_samples[0, :config.sinkhorn_div_samples],
+                    grass_pure_ident[:config.sinkhorn_div_samples]
+                )
+            )
+        else:
+            dist = 'prior'
+
+        # Now calculate the metrics for mnist.
+        metrics_dict[f'mnist_fcd_{dist}'] = image_metrics.fcd_mnist(
+            mnist_model, mnist_params,
+            rearrange(
+                x_samples[1, :config.pq_mass_samples],
+                '... (H W C) -> ... H W C',
+                H=image_shape[0], W=image_shape[1], C=image_shape[2]
+            ),
+            mnist_pure[:config.pq_mass_samples]
+        )
+        mnist_pure = mnist_pure.reshape(mnist_pure.shape[0], -1)
+        metrics_dict[f'mnist_pqmass_{dist}'] = metrics.pq_mass(
+            x_samples[1, :config.pq_mass_samples],
+            mnist_pure[:config.pq_mass_samples]
+        )
+        metrics_dict[f'mnist_divergence_{dist}'] = metrics.sinkhorn_divergence(
+            x_samples[1, :config.sinkhorn_div_samples],
+            mnist_pure[:config.sinkhorn_div_samples]
+        )
+        metrics_dict[f'mnist_psnr_{dist}'] = metrics.psnr(
+            x_samples[1, :config.psnr_samples],
+            mnist_pure[:config.psnr_samples],
+            max_spread=datasets.MAX_SPREAD
+        )
+
+        return metrics_dict
 
 
 def main(_):
@@ -172,7 +234,7 @@ def main(_):
 
         # Get pure samples for Gaussian initialization and metric calculations.
         mnist_pure, _ = datasets.get_corrupted_mnist(
-            rng_dataset, 0.0, 1.0, imagenet_path, config.dataset_size
+            rng_comp, 0.0, 1.0, imagenet_path, config.dataset_size
         )
         image_shape = mnist_pure.shape[1:]
 
@@ -184,7 +246,7 @@ def main(_):
 
     # Load our MNIST classifier for metrics.
     rng_class, rng = jax.random.split(rng)
-    mnist_model, mnist_params = metrics.get_model(
+    mnist_model, mnist_params = image_metrics.get_model(
         FLAGS.mnist_classifier_path, rng_class,
         **config.get('mnist_classifier_kwargs', {})
     )
@@ -232,7 +294,24 @@ def main(_):
         axis_name='batch'
     )
 
-    
+    # Create a similar sampling function for the prior.
+    def sample_prior(
+        rng, state_local, params_local, image_shape, sample_batch_size,
+        sampling_kwargs
+    ):
+        return utils.sample(
+            rng, state_local, {'params': params_local},
+            sample_shape=(sample_batch_size,),
+            feature_shape=image_shape[0] * image_shape[1] * image_shape[2],
+            **sampling_kwargs
+        )
+    # Only sample as much as we need for the metrics.
+    n_prior_samples = max(
+        config.sinkhorn_div_samples, config.pq_mass_samples,
+        config.psnr_samples, config.fcd_samples
+    )
+
+
     print('Initial EM Gaussian fit.')
     for lap in tqdm(range(config.gaussian_em_laps), desc='EM Lap'):
         rng_samp, rng = jax.random.split(rng)
@@ -268,7 +347,7 @@ def main(_):
         # Get the statistics of the separate mnist sample.
         rng_ppca, rng = jax.random.split(rng)
         mnist_mean, mnist_cov = utils.ppca(rng_ppca, x_post[1], rank=4)
-        post_state_params['denoiser_models_1']['mean_x'] = mnist_mean
+        post_state_params['denoiser_models_1']['mu_x'] = mnist_mean
         post_state_params['denoiser_models_1']['cov_x'] = mnist_cov
 
     # Save our initial samples.
@@ -278,36 +357,11 @@ def main(_):
     checkpoint_manager.wait_until_finished()
 
     # Log our initial pq mass chi^2.
-    wandb.log(
-        {
-            'pq_chi2': metrics.pq_mass(
-                x_post[1][:config.pq_mass_samples],
-                mnist_pure[:config.pq_mass_samples]
-            ),
-            'pq_chi2_ident': metrics.pq_mass(
-                x_post[1][:config.pq_mass_samples],
-                grass_pure_ident[:config.pq_mass_samples]
-            ),
-            'fcd': metrics.fcd_mnist(
-                mnist_model, mnist_params,
-                rearrange(
-                    x_post[1][:config.pq_mass_samples],
-                    '... (H W C) -> ... H W C',
-                    H=image_shape[0], W=image_shape[1], C=image_shape[2]
-                ),
-                mnist_pure[:config.pq_mass_samples]
-            ),
-            'inception': metrics.inception_score_mnist(
-                mnist_model, mnist_params,
-                rearrange(
-                    x_post[1][:config.pq_mass_samples],
-                    '... (H W C) -> ... H W C',
-                    H=image_shape[0], W=image_shape[1], C=image_shape[2]
-                )
-            )
-        },
-        step=0
+    metrics_dict = compute_metrics(
+        config, x_post, mnist_pure, mnist_model, mnist_params, image_shape,
+        grass_pure_ident
     )
+    wandb.log(metrics_dict, commit=False)
 
     # Initialize our state and posterior state.
     rng_state, rng = jax.random.split(rng, 2)
@@ -324,10 +378,22 @@ def main(_):
     post_state_unet = jax_utils.replicate(post_state_unet)
     ema = training_utils.EMA(jax_utils.unreplicate(state_unet).params)
 
-    # Change the sampling parameters to those for the diffusion model.
+    # Create the apply_model function with config
+    apply_model = apply_model_with_config(config)
+
+    # Change the sampling parameters to those for the diffusion model, and set
+    # the prior sampling parameters.
     sample_pmap = jax.pmap(
         functools.partial(
             sample, image_shape=image_shape,
+            sample_batch_size=config.sample_batch_size,
+            sampling_kwargs=config.sampling_kwargs
+        ),
+        axis_name='batch'
+    )
+    sample_prior_pmap = jax.pmap(
+        functools.partial(
+            sample_prior, image_shape=image_shape,
             sample_batch_size=config.sample_batch_size,
             sampling_kwargs=config.sampling_kwargs
         ),
@@ -361,8 +427,7 @@ def main(_):
                 )
             )
             wandb.log(
-                {'loss_state': jax_utils.unreplicate(loss)},
-                step=(lap * config.epochs + epoch)
+                {'loss_state': jax_utils.unreplicate(loss)}
             )
 
         # Generate new posterior samples with our model.
@@ -394,37 +459,38 @@ def main(_):
         )
         x_post = jnp.split(x_post, 2, axis=-1)
 
-        # Calculate the pq mass chi^2 for our posterior sample.
-        wandb.log(
-            {
-                'pq_chi2': metrics.pq_mass(
-                    x_post[1][:config.pq_mass_samples],
-                    mnist_pure[:config.pq_mass_samples]
-                ),
-                'pq_chi2_ident': metrics.pq_mass(
-                    x_post[1][:config.pq_mass_samples],
-                    grass_pure_ident[:config.pq_mass_samples]
-                ),
-                'fcd': metrics.fcd_mnist(
-                    mnist_model, mnist_params,
-                    rearrange(
-                        x_post[1][:config.pq_mass_samples],
-                        '... (H W C) -> ... H W C',
-                        H=image_shape[0], W=image_shape[1], C=image_shape[2]
-                    ),
-                    mnist_pure[:config.pq_mass_samples]
-                ),
-                'inception': metrics.inception_score_mnist(
-                    mnist_model, mnist_params,
-                    rearrange(
-                        x_post[1][:config.pq_mass_samples],
-                        '... (H W C) -> ... H W C',
-                        H=image_shape[0], W=image_shape[1], C=image_shape[2]
-                    )
-                )
-            },
-            step=(lap * config.epochs + epoch)
+        # Calculate and log metrics for our posterior sample.
+        metrics_dict_post = compute_metrics(
+            config, x_post, mnist_pure, mnist_model, mnist_params, image_shape,
+            grass_pure_ident
         )
+        wandb.log(metrics_dict_post, commit=False)
+
+        # Calculate number of batches needed for prior samples
+        batches = (
+            n_prior_samples // (config.sample_batch_size * jax.device_count())
+        )
+        rng_samp, rng = jax.random.split(rng)
+        rng_samp = jax.random.split(rng_samp, (batches, jax.device_count()))
+        x_prior = []
+        for rng_pmap in rng_samp:
+            x_prior.append(
+                jax.device_put(
+                    sample_prior_pmap(
+                        rng_pmap, state_unet, params['denoiser_models_1']
+                    ),
+                    jax.local_devices(backend="cpu")[0]
+                )
+            )
+
+        # Calculate the metrics on the prior samples and log.
+        x_prior = rearrange(
+            jnp.stack(x_prior, axis=0), 'K M N ... -> (K M N) ...'
+        )
+        metrics_dict_prior = compute_metrics(
+            config, x_prior, mnist_pure, mnist_model, mnist_params, image_shape
+        )
+        wandb.log(metrics_dict_prior, commit=False)
 
         # Save the state, ema, and some samples.
         ckpt = {

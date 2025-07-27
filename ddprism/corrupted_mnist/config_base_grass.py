@@ -75,7 +75,7 @@ def get_config():
 
     config.pq_mass_samples = 512
     config.psnr_samples = 8192
-    config.sinkhorn_div_samples = 512
+    config.sinkhorn_div_samples = 8192
     config.fcd_samples = 8192
 
     # wandb parameters

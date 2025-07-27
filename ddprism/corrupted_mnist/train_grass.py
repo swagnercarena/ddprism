@@ -123,14 +123,14 @@ def compute_metrics(
         )
         # Compute the sinkhorn divergence of our samples.
         metrics_dict[f'divergence_{dist}'] = metrics.sinkhorn_divergence(
-            x_samples[:config.sinkhorn_div_samples],
-            grass_pure[:config.sinkhorn_div_samples]
+            x_samples[:100], #[:config.sinkhorn_div_samples],
+            grass_pure[:100]#[:config.sinkhorn_div_samples]
         )
         metrics_dict[f'divergence_ident_{dist}'] = metrics.sinkhorn_divergence(
-            x_samples.reshape(x_samples.shape[0], -1)[:config.sinkhorn_div_samples],
+            x_samples.reshape(x_samples.shape[0], -1)[:100], #[:config.sinkhorn_div_samples],
             grass_pure_ident.reshape(
                 grass_pure_ident.shape[0], -1
-            )[:config.sinkhorn_div_samples]
+            )[:100]#[:config.sinkhorn_div_samples]
         )
 
         return metrics_dict
@@ -402,8 +402,19 @@ def main(_):
                     jax.local_devices(backend="cpu")[0]
                 )
             )
+        # No longer need sampling dimensions for training the state.
+        x_prior = rearrange(
+            jnp.stack(x_prior, axis=0), 'K M N ... -> (K M N) ...'
+        )
+        # Calculate and log metrics for our posterior sample.
+        metrics_dict_prior = compute_metrics(
+            config, x_prior, grass_pure, grass_pure_ident, dist='prior'
+        )
+        wandb.log(
+            metrics_dict_prior, commit=False
+        )
 
- v
+ 
 
         # Save the state, ema, and some samples.
         ckpt = {

@@ -9,6 +9,9 @@ import jax.numpy as jnp
 from jax import Array
 from einops import rearrange
 
+# for audio
+from jax.scipy.signal import stft, istft
+
 
 def reflect_pad(x: Array, kernel_size: Sequence[int]) -> Array:
     """Pads spatial dimensions of image by reflection.
@@ -533,4 +536,262 @@ class FlatUNet(UNet):
     def feat_dim(self):
         """Get the feature dimension."""
         return self.image_shape[0] * self.image_shape[1] * self.image_shape[2]
+    
 
+class AudioUNet(UNet):
+    """Wrapper class for dealing with audio clips. Based on DiffSep (https://arxiv.org/pdf/2210.17327)
+
+    Arguments:
+        hid_channels: Number of channels used in each level.
+        hid_blocks: Number of block used in each level.
+        kernel_size: Defines the kernel size used for all convolutional blocks.
+        emb_features: Size of the embedding vector that encodes the time
+            features.
+        heads: Number of heads to use for the attention block of each level.
+            If a level is not included it will have no attention block.
+        dropout_rate: Dropout rate applied in the ResBlock. Attention block has
+            no dropout.
+        activation: Activation function for resnet blocks.
+        # TODO: switch for audio...
+        image_shape: Shape in (H, W, C) for images in the batch.
+    """
+    audio_shape: Sequence[int] = None
+
+    def setup(self):
+        # Check image shape meets the requirements.
+        assert self.image_shape is not None
+        assert len(self.image_shape) == 2
+
+    @nn.compact
+    def __call__(self, x: Array, t: Array, train: bool = True) -> Array:
+        """Apply STFT and c(x).
+        # see this code here: https://github.com/fakufaku/diffusion-separation/blob/main/models/score_models.py
+
+        Arguments:
+            x: Input audio with shape (*, (Timesteps)).
+            t: Time embedding, with shape (*, E). (time here is for the denoising schedule)
+            train: If true, values are passed in training mode.
+
+        Returns:
+            Output with shape (*, (Timesteps)).
+        """
+        # TODO: STFT
+        x = stft(x)
+        # TODO: c(x) transform
+        x = self.welker22_transform(x)
+        # TODO: stack complex/real
+
+        x = super().__call__(x, t, train)
+        # TODO: unstack complex/real
+
+        # TODO: inverse c(x) transform
+        x = self.welker22_inverse_transform(x)
+        # TODO: inverse STFT
+        x = istft(x)
+
+        return x
+    
+    def welker22_transform(self,x):
+        """
+        - section 3.2: Welker '22: https://www.isca-archive.org/interspeech_2022/welker22_interspeech.pdf
+        - implementation from: https://github.com/fakufaku/diffusion-separation/blob/main/models/score_models.py
+        
+        c(x) = beta^-1 * np.abs(x)^alpha * exp(j < x)
+        Welker '22:= found empirically: beta = 3, alpha = 0.5 ...
+        
+        """ 
+        alpha = 0.5
+        beta = 3
+
+        phase = jnp.exp(1j * jnp.angle(x))
+        x = beta**-1 * jnp.abs(x)**alpha * phase
+
+        return x
+    
+    def welker22_inverse_transform(self,x):
+        """
+        - section 3.2: Welker '22: https://www.isca-archive.org/interspeech_2022/welker22_interspeech.pdf
+        - implementation from: https://github.com/fakufaku/diffusion-separation/blob/main/models/score_models.py
+        
+        c(x) = beta^-1 * np.abs(x)^alpha * exp(j < x)
+        Welker '22:= found empirically: beta = 3, alpha = 0.5 ...
+        """
+        alpha = 0.5
+        beta = 3
+
+        phase = jnp.exp(1j * jnp.angle(x))
+        x = beta * jnp.abs(x)**(1/alpha) * phase
+
+        return x
+
+    
+    def complex_to_real(self, x):
+        # x: (batch, chan, freq, frames)
+        x = jnp.stack((x.real, x.imag), axis=1)  # (batch, 2, chan, freq, frames)
+        x = rearrange(
+            x, '... T C H W -> ... (T C) H W', T=2, C=self.audio_channels,
+            H=self.image_shape[0],
+            W=self.image_shape[1]
+        ) # (batch, 2 * chan, freq, frames)
+
+        return x
+
+    def real_to_complex(self, x):
+        # re-separate out real / imag portions
+        x = rearrange(
+            x, '... (T C) H W -> ... T C H W', T=2, C=self.audio_channels,
+            H=self.image_shape[0],
+            W=self.image_shape[1]
+        ) 
+        x = jnp.moveaxis(x, 1, -1) # (batch, chan, freq, frames, 2)
+        x = x[..., 0] + 1j * x[..., 1] # (batch, chan, freq, frames)
+
+        return x
+
+    @property
+    def feat_dim(self):
+        """Get the feature dimension."""
+        return self.image_shape[0] * self.image_shape[1] * self.image_shape[2]
+
+
+
+
+
+# 2023 (c) LINE Corporation
+# MIT License
+import copy
+
+import torch
+import torchaudio
+from hydra.utils import instantiate
+
+
+class ScoreModelNCSNpp(torch.nn.Module):
+    def __init__(
+        self,
+        num_sources,
+        stft_args,
+        backbone_args,
+        transform="exponent",
+        spec_abs_exponent=0.5,
+        spec_factor=3.0,
+        spec_trans_learnable=False,
+    ):
+        super().__init__()
+
+        # infer input output channels of backbone from number of sources
+        backbone_args.update(
+            num_channels_in=2 * num_sources + 2, num_channels_out=2 * num_sources
+        )
+        self.backbone = instantiate(backbone_args)
+        self.stft_args = stft_args
+        self.stft = torchaudio.transforms.Spectrogram(power=None, **stft_args)
+        self.stft_inv = torchaudio.transforms.InverseSpectrogram(**stft_args)
+
+        self.transform = transform
+        self.spec_abs_exponent = spec_abs_exponent
+        self.spec_factor = spec_factor
+        if spec_trans_learnable:
+            self.spec_abs_exponent = torch.nn.Parameter(
+                torch.tensor(self.spec_abs_exponent)
+            )
+            self.spec_factor = torch.nn.Parameter(torch.tensor(spec_factor))
+
+    def transform_forward(self, spec):
+        if self.transform == "exponent":
+            if self.spec_abs_exponent != 1:
+                # only do this calculation if spec_exponent != 1, otherwise it's quite a bit of wasted computation
+                # and introduced numerical error
+                e = abs(self.spec_abs_exponent)
+                spec = spec.abs() ** abs(e) * torch.exp(1j * spec.angle())
+            spec = spec * self.spec_factor
+        elif self.transform == "log":
+            spec = torch.log1p(spec.abs()) * torch.exp(1j * spec.angle())
+            spec = spec * abs(self.spec_factor)
+        elif self.transform == "none":
+            spec = spec
+        else:
+            raise ValueError("transform must be one of 'exponent'|'log'|'none'")
+
+        return spec
+
+    def transform_backward(self, spec):
+        if self.transform == "exponent":
+            spec = spec / abs(self.spec_factor)
+            if self.spec_abs_exponent != 1:
+                e = abs(self.spec_abs_exponent)
+                spec = spec.abs() ** (1 / e) * torch.exp(1j * spec.angle())
+        elif self.transform == "log":
+            spec = spec / abs(self.spec_factor)
+            spec = (torch.exp(spec.abs()) - 1) * torch.exp(1j * spec.angle())
+        elif self.transform == "none":
+            spec = spec
+        return spec
+
+    def complex_to_real(self, x):
+        # x: (batch, chan, freq, frames)
+        x = torch.stack((x.real, x.imag), dim=1)  # (batch, 2, chan, freq, frames)
+        x = x.flatten(start_dim=1, end_dim=2)  # (batch, 2 * chan, freq, frames)
+        return x
+
+    def real_to_complex(self, x):
+        x = x.reshape((x.shape[0], 2, -1) + x.shape[2:])
+        x = torch.view_as_complex(x.moveaxis(1, -1).contiguous())
+        return x
+
+    def pad(self, x):
+        n_frames = x.shape[-1]
+        rem = n_frames % 64
+        if rem == 0:
+            return x, 0
+        else:
+            pad = 64 - rem
+            x = torch.nn.functional.pad(x, (0, pad))
+            return x, pad
+
+    def unpad(self, x, pad):
+        if pad == 0:
+            return x
+        else:
+            return x[..., :-pad]
+
+    def adjust_length(self, x, n_samples):
+        if x.shape[-1] < n_samples:
+            return torch.nn.functional.pad(x, (0, n_samples - x.shape[-1]))
+        elif x.shape[-1] > n_samples:
+            return x[..., :n_samples]
+        else:
+            return x
+
+    def pre_process(self, x):
+        n_samples = x.shape[-1]
+        x = torch.nn.functional.pad(
+            x, (0, self.stft_args["n_fft"] - self.stft_args["hop_length"])
+        )
+        x = self.stft(x)
+        x = self.transform_forward(x)
+        x = self.complex_to_real(x)
+        x, n_pad = self.pad(x)
+        return x, n_samples, n_pad
+
+    def post_process(self, x, n_samples, n_pad):
+        x = self.unpad(x, n_pad)
+        x = self.real_to_complex(x)
+        x = self.transform_backward(x)
+        x = self.stft_inv(x)
+        x = self.adjust_length(x, n_samples)
+        return x
+
+    def forward(self, xt, time_cond, mix):
+        """
+        Args:
+            x: (batch, channels, time)
+            time_cond: (batch,)
+        Returns:
+            x: (batch, channels, time) same size as input
+        """
+        x = torch.cat((xt, mix), dim=1)
+        x, n_samples, n_pad = self.pre_process(x)
+        x = self.backbone(x, time_cond)
+        x = self.post_process(x, n_samples, n_pad)
+        return x

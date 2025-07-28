@@ -2,6 +2,7 @@
 import os
 
 from absl import app, flags
+from flax import linen as nn
 from flax.training import train_state
 import jax
 import jax.numpy as jnp
@@ -13,6 +14,7 @@ import wandb
 
 from ddprism import training_utils
 from ddprism.clvm import clvm_utils
+from ddprism.clvm import models
 from ddprism.metrics import metrics
 from ddprism.rand_manifolds.random_manifolds import MAX_SPREAD
 from ddprism.rand_manifolds.scaling_n_models import load_dataset
@@ -23,6 +25,59 @@ flags.DEFINE_string('workdir', None, 'working directory.')
 config_flags.DEFINE_config_file(
     'config', None, 'File path to the training configuration.',
 )
+
+
+def get_activation_fn(activation_name: str):
+    """Get activation function from string name."""
+    activation_map = {
+        'relu': nn.relu,
+        'silu': nn.silu,
+        'tanh': nn.tanh,
+    }
+    return activation_map.get(activation_name, nn.silu)
+
+
+def create_vae_encoders_decoders(config, features):
+    """Create VAE encoders and decoders based on config."""
+    activation_fn = get_activation_fn(config.vae.activation)
+
+    # Create signal encoder
+    signal_encoder = models.EncoderMLP(
+        latent_features=config.latent_dim_t,
+        hid_features=config.vae.signal_encoder_hid_features,
+        activation=activation_fn,
+        normalize=config.vae.normalize,
+        dropout_rate=config.vae.dropout_rate
+    )
+
+    # Create background encoder
+    bkg_encoder = models.EncoderMLP(
+        latent_features=config.latent_dim_z,
+        hid_features=config.vae.bkg_encoder_hid_features,
+        activation=activation_fn,
+        normalize=config.vae.normalize,
+        dropout_rate=config.vae.dropout_rate
+    )
+
+    # Create signal decoder
+    signal_decoder = models.DecoderMLP(
+        features=features,
+        hid_features=config.vae.signal_decoder_hid_features,
+        activation=activation_fn,
+        normalize=config.vae.normalize,
+        dropout_rate=config.vae.dropout_rate
+    )
+
+    # Create background decoder
+    bkg_decoder = models.DecoderMLP(
+        features=features,
+        hid_features=config.vae.bkg_decoder_hid_features,
+        activation=activation_fn,
+        normalize=config.vae.normalize,
+        dropout_rate=config.vae.dropout_rate
+    )
+
+    return signal_encoder, bkg_encoder, signal_decoder, bkg_decoder
 
 
 @jax.jit
@@ -134,13 +189,31 @@ def run_clvm(config, workdir):
 
     for source_index in range(1, config.n_sources):
 
-        # Initialize the lienar CLVM model.
-        clvm_model = clvm_utils.CLVMLinear(
-            features=x_all.shape[-1],
-            latent_dim_z=config.latent_dim_z,
-            latent_dim_t=config.latent_dim_t,
-            obs_dim=y_all.shape[-1]
-        )
+        # Initialize the CLVM model based on config.model_type
+        if config.model_type == "linear":
+            clvm_model = clvm_utils.CLVMLinear(
+                features=x_all.shape[-1],
+                latent_dim_z=config.latent_dim_z,
+                latent_dim_t=config.latent_dim_t,
+                obs_dim=y_all.shape[-1]
+            )
+        elif config.model_type == "vae":
+            # Create VAE encoders and decoders
+            signal_encoder, bkg_encoder, signal_decoder, bkg_decoder = (
+                create_vae_encoders_decoders(config, x_all.shape[-1])
+            )
+            clvm_model = clvm_utils.CLVMVAE(
+                features=x_all.shape[-1],
+                latent_dim_z=config.latent_dim_z,
+                latent_dim_t=config.latent_dim_t,
+                obs_dim=y_all.shape[-1],
+                signal_encoder=signal_encoder,
+                bkg_encoder=bkg_encoder,
+                signal_decoder=signal_decoder,
+                bkg_decoder=bkg_decoder
+            )
+        else:
+            raise ValueError(f"Unknown model_type: {config.model_type}. Use 'linear' or 'vae'.")
 
         # Enriched observations (target)
         enr_obs = y_all[:, source_index]

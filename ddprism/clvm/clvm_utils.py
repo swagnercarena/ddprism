@@ -401,6 +401,12 @@ class CLVMVAE(CLVMLinear):
     signal_encoder: nn.Module
     bkg_encoder: nn.Module
 
+    def setup(self):
+        self.log_sigma_obs = self.variable(
+            "variables", "log_sigma_obs",
+            lambda: jnp.zeros((1,))
+        )
+
     def encode_bkg_feat(self, feat: Array) -> Tuple[Array, Array]:
         """Encode the input data into the latent distribution.
 

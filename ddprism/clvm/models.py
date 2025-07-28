@@ -40,7 +40,8 @@ class EncoderMLP(nn.Module):
             x = nn.Dense(feat)(x)
 
             # Activation
-            x = self.activation(x)
+            if self.activation is not None:
+                x = self.activation(x)
 
             if self.normalize:
                 x = nn.LayerNorm()(x)
@@ -96,7 +97,8 @@ class DecoderMLP(nn.Module):
             x = nn.Dense(feat)(x)
 
             # Activation
-            x = self.activation(x)
+            if self.activation is not None:
+                x = self.activation(x)
 
             if self.normalize:
                 x = nn.LayerNorm()(x)

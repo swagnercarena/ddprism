@@ -219,11 +219,12 @@ class AttBlock(nn.Module):
         return y + x
 
 
-class EncoderUNet(nn.Module):
-    r"""Creates an encoder with the architecture similar to that of the first half of UNet.
+class EncoderFlatUNet(nn.Module):
+    r"""Creates an encoder similar to the first half of a UNet.
 
     Arguments:
         latent_features: Number of latent features.
+        image_shape: Shape of the images once unflattened.
         hid_channels: Number of channels used in each level.
         hid_blocks: Number of block used in each level.
         kernel_size: Defines the kernel size used for all convolutional blocks.
@@ -237,6 +238,7 @@ class EncoderUNet(nn.Module):
         Assumed in_channels = out_channels for diffusion.
     """
     latent_features: int
+    image_shape: Sequence[int]
     hid_channels: Sequence[int]
     hid_blocks: Sequence[int]
     kernel_size: Sequence[int] = (3, 3)
@@ -244,9 +246,8 @@ class EncoderUNet(nn.Module):
     dropout_rate: float = 0.0
     activation: Callable[..., nn.Module] = nn.silu
 
-
     @nn.compact
-    def encode_feat(self, x: Array, train: bool = True) -> Array:
+    def _encode_feat(self, x: Array, train: bool = True) -> Array:
         r"""Return the encoder output.
 
         Arguments:
@@ -259,9 +260,7 @@ class EncoderUNet(nn.Module):
         assert len(self.hid_blocks) == len(self.hid_channels)
         heads = {} if self.heads is None else self.heads
 
-        out_channels = x.shape[-1]
         downsample_factor = [0.5, 0.5]
-        features = x.shape[-1] #?
 
         # Descend from image to lowest dimension.
         for i, n_blocks in enumerate(self.hid_blocks):
@@ -318,20 +317,64 @@ class EncoderUNet(nn.Module):
         x = jnp.split(nn.Dense(self.latent_features * 2)(x), 2, axis=-1)
         return x[0], jnp.exp(x[1])
 
+    def reshape(self, x:Array) -> Array:
+        """Reshape flattened image.
+
+        Arguments:
+            x: Input image with shape (*, (H W C)).
+
+        Returns:
+            Input image with shape (*, H, W, C).
+        """
+        return rearrange(
+            x, '... (H W C) -> ... H W C', H=self.image_shape[0],
+            W=self.image_shape[1], C=self.image_shape[2]
+        )
+
+    @nn.compact
+    def encode_feat(self, x: Array, train: bool = True) -> Array:
+        """Encode the input features into the latent distribution.
+
+        Arguments:
+            x: Input features with shape (*, (H W C)).
+            train: Whether in training mode for dropout.
+
+        Returns:
+            Latent mean and variance deviation for the input features.
+        """
+        x = self.reshape(x)
+        return self._encode_feat(x, train=train)
+
     @nn.compact
     def encode_obs(self, x: Array, a_mat: Array) -> Array:
         """Encode the input observations into the latent distribution.
+
+        Arguments:
+            x: Input observations with shape (*, (H W C)).
+            a_mat: Linear transformation matrix with shape
+                (* (I J) (H W)).
+
+        Returns:
+            Latent mean and variance deviation for the input observations.
         """
-        x = jnp.concatenate([x, a_mat[..., None]], axis=-1)
+        x = self.reshape(x)
+        a_mat = rearrange(
+            a_mat, 'K (I J) (H W) -> K H W (I J)', H=self.image_shape[0],
+            W=self.image_shape[1]
+        )
+        # Turn the observation dimension into channels.
+        x = jnp.concatenate([x, a_mat], axis=-1)
+
         return self.encode_feat(x)
 
 
-class DecoderUNet(nn.Module):
-    r"""Creates a decoder with the architecture similar to that of the second half of UNet.
+class DecoderFlatUNet(nn.Module):
+    r"""Creates a decoder similar to the second half of a UNet.
 
     Arguments:
         image_shape: Shape of the image.
-        hid_channels: Number of channels used in each level.
+        hid_channels: Number of channels used in each level. Should match the
+            encoder.
         hid_blocks: Number of block used in each level.
         kernel_size: Defines the kernel size used for all convolutional blocks.
         heads: Number of heads to use for the attention block of each level.
@@ -352,7 +395,7 @@ class DecoderUNet(nn.Module):
     activation: Callable[..., nn.Module] = nn.silu
 
     @nn.compact
-    def decode_feat(self, x: Array, train: bool = True) -> Array:
+    def _decode_feat(self, x: Array, train: bool = True) -> Array:
         """Decode the latent variables into the feature space.
 
         Arguments:
@@ -366,17 +409,16 @@ class DecoderUNet(nn.Module):
         assert len(self.hid_blocks) == len(self.hid_channels)
         heads = {} if self.heads is None else self.heads
 
-        out_channels = self.image_shape[2]
-        features = self.image_shape[0] * self.image_shape[1] * self.image_shape[2]
-
-        strides = [2 for k in self.kernel_size]
-        padding = [(k // 2, k // 2) for k in self.kernel_size]
-
+        in_features = (
+            self.image_shape[0] // (2 ** (len(self.hid_channels) - 1)),
+            self.image_shape[1] // (2 ** (len(self.hid_channels) - 1)),
+            self.hid_channels[-1]
+        )
+        upsample_factor = [2.0, 2.0]
 
         # Broadcast vector of latent features to an image of shape (*, init_kernel_size, hid_channels[-1]).
-        x = nn.Dense(features=features)(x)
-        x = x.reshape((-1,) + self.in_shape)
-        x = nn.Dense(features=self.hid_channels[-1])(x)
+        x = nn.Dense(in_features[0] * in_features[1] * in_features[2])(x)
+        x = x.reshape((-1,) + in_features)
 
         # Ascend from lowest dimension to image.
         for i, n_blocks in reversed(list(enumerate(self.hid_blocks))):
@@ -397,10 +439,23 @@ class DecoderUNet(nn.Module):
 
             if i == 0:
                 # Final layer of is fully connected.
-                x = nn.Dense(out_channels)(x)
+                x = nn.Dense(self.image_shape[2])(x)
             else:
                 # For all other layers conduct an upsampling iteration.
-                x = Resample([float (s) for s in strides], method='nearest')(x)
+                x = Resample(upsample_factor, method='lanczos3')(x)
 
-        x = self.activation(x)
         return x
+
+    @nn.compact
+    def decode_feat(self, x: Array, train: bool = True) -> Array:
+        """Decode the latent variables into the feature space.
+
+        Arguments:
+            x: Input latents with shape (*, latent_features).
+            train: Whether in training mode for dropout.
+
+        Returns:
+            Decoded feature with shape (*, (H W C)).
+        """
+        x = self._decode_feat(x, train=train)
+        return rearrange(x, '... H W C -> ... (H W C)')

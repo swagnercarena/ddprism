@@ -86,7 +86,7 @@ def train_step(state, rng, enr_obs, bkg_obs, a_mat_enr, a_mat_bkg, other_vars):
     def loss_fn(params):
         # Collect the relevant variables.
         variables = {'params': params, 'variables': other_vars}
-        rng_bkg, rng_enr, rng_drop = jax.random.split(rng, 2)
+        rng_bkg, rng_enr, rng_drop = jax.random.split(rng, 3)
         rng_drop_bkg, rng_drop_enr = jax.random.split(rng_drop)
 
         # Enriched observation loss

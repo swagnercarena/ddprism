@@ -17,8 +17,6 @@ from ddprism.metrics import metrics
 from ddprism.rand_manifolds.random_manifolds import MAX_SPREAD
 from ddprism.rand_manifolds.scaling_n_models import load_dataset
 
-jax.config.update("jax_enable_x64", True)
-
 FLAGS = flags.FLAGS
 
 flags.DEFINE_string('workdir', None, 'working directory.')

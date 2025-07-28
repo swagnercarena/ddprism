@@ -27,8 +27,11 @@ def get_config():
 
     # Training parameters.
     config.lr_init_val = 1e-4
-    config.lr_end_val = 1e-6
-    config.lr_schedule = 'cosine'
+    config.lr_schedule = ConfigDict({
+        'type': 'cosine',
+        'warmup_steps': 0,
+        'min_lr_ratio': 0.0
+    })
     config.epochs = 1024
     config.batch_size = 1024
 

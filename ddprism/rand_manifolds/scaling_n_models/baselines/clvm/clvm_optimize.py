@@ -43,7 +43,7 @@ def objective(trial, config, workdir):
     config_clvm['latent_dim_t'] = latent_dim_t
 
     config_clvm['lr_init_val'] = lr_init_val
-    config_clvm['lr_schedule'] = lr_schedule
+    config_clvm['lr_schedule']['type'] = lr_schedule
 
     # Run CLVM.
     metrics = run_clvm(

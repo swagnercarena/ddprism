@@ -140,7 +140,7 @@ def get_prior_samples(rng, state, num_samples, other_vars):
 
     # Sample from prior (standard normal)
     latent_draw = state.apply_fn(
-        variables, rng, num_samples, method='_latent_draw_prior', train=False
+        variables, rng, num_samples, method='_latent_draw_prior'
     )
     z_latent, t_latent = state.apply_fn(
         variables, latent_draw, method='_latent_split'

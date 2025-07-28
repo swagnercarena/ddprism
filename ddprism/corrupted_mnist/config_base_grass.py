@@ -29,7 +29,7 @@ def get_config():
     config.post_use_dplr = True
     config.post_safe_divide = 1e-6
     config.post_regularization = 1e-6
-    config.post_error_threshold = 5e-1
+    config.post_error_threshold = 0.05
 
     # Training parameters.
     config.lr_init_val = 1e-3

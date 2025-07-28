@@ -485,7 +485,10 @@ def main(_):
         # Calculate the metrics on the prior samples and log.
         x_prior = rearrange(
             jnp.stack(x_prior, axis=0), 'K M N ... -> (K M N) ...'
-        )
+        ) 
+        print(x_prior.shape)
+        # Add dummy input for compute_metrics function which takes in a tuple of grass and digits samples.
+        x_prior = (None, x_prior)  
         metrics_dict_prior = compute_metrics(
             config, x_prior, mnist_pure, mnist_model, mnist_params, image_shape
         )

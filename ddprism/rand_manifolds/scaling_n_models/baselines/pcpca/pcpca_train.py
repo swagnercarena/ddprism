@@ -15,8 +15,7 @@ from ddprism.metrics import metrics
 from ddprism.pcpca import pcpca_utils
 from ddprism import plotting_utils
 from ddprism.rand_manifolds.random_manifolds import MAX_SPREAD
-
-import load_dataset
+from ddprism.rand_manifolds.scaling_n_models import load_dataset
 
 jax.config.update("jax_enable_x64", True)
 

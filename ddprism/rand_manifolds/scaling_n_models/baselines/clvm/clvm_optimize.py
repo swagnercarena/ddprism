@@ -46,7 +46,9 @@ def objective(trial, config, workdir):
     config_clvm['lr_schedule'] = lr_schedule
 
     # Run CLVM.
-    metrics = run_clvm(config, os.path.join(workdir, f'trial_{trial.number}'))
+    metrics = run_clvm(
+        config_clvm, os.path.join(workdir, f'trial_{trial.number}')
+    )
     trial.set_user_attr("trial_metrics", metrics)
 
     return metrics['div_post_2']

@@ -2,6 +2,7 @@
 from typing import Callable, Mapping, Sequence, Tuple
 
 from flax import linen as nn
+import jax
 import jax.numpy as jnp
 from jax import Array
 from einops import rearrange
@@ -57,12 +58,17 @@ class EncoderMLP(nn.Module):
         return x[0], jnp.exp(x[1])
 
     @nn.compact
-    def encode_obs(self, x: Array, a_mat: Array) -> Array:
+    def encode_obs(self, x: Array, a_mat: Array, train: bool = True) -> Array:
         """Encode the input observations into the latent distribution.
+
+        Args:
+            x: Input observations.
+            a_mat: Linear transformation matrix.
+            train: Whether in training mode for dropout.
         """
         a_mat = rearrange(a_mat, 'K L M -> K (L M)')
         x = jnp.concatenate([x, a_mat], axis=-1)
-        return self.encode_feat(x)
+        return self.encode_feat(x, train=train)
 
 
 class DecoderMLP(nn.Module):

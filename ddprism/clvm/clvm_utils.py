@@ -115,8 +115,8 @@ class CLVMLinear(nn.Module):
     obs_dim: int
 
     def setup(self):
-        self.mu_enr = self.param(
-            "mu_enr", nn.initializers.zeros, (self.features,)
+        self.mu_signal = self.param(
+            "mu_signal", nn.initializers.zeros, (self.features,)
         )
         self.mu_bkg = self.param(
             "mu_bkg", nn.initializers.zeros, (self.features,)
@@ -133,31 +133,33 @@ class CLVMLinear(nn.Module):
             "variables", "log_sigma_obs",
             lambda: jnp.zeros((1,))
         )
-        self.a_mat = self.variable(
-            "variables", "a_mat",
-            lambda: jnp.zeros((self.obs_dim, self.features))
-        )
 
     def encode_bkg_feat(self, feat: Array) -> Tuple[Array, Array]:
         """Encode the input data into the latent distribution.
 
         Args:
-            feat: Background feature.
+            feat: Background feature with shape [batch_size, features].
         """
         sigma_obs = jnp.exp(self.log_sigma_obs.value)
-        return latent_posterior_from_feat_bkg(
+        return jax.vmap(
+            latent_posterior_from_feat_bkg, in_axes=(None, None, 0, None)
+        )(
             self.s_mat, self.mu_bkg, feat, sigma_obs
         )
 
-    def encode_bkg_obs(self, obs: Array) -> Tuple[Array, Array]:
+    def encode_bkg_obs(self, obs: Array, a_mat: Array) -> Tuple[Array, Array]:
         """Encode the input data into the latent distribution.
 
         Args:
-            obs: Background observation.
+            obs: Background observation with shape [batch_size, obs_dim].
+            a_mat: Linear transformation from feature to observation space with
+                shape [batch_size, obs_dim, features].
         """
         sigma_obs = jnp.exp(self.log_sigma_obs.value)
-        return latent_posterior_from_obs_bkg(
-            self.s_mat, self.mu_bkg, obs, sigma_obs, self.a_mat.value
+        return jax.vmap(
+            latent_posterior_from_obs_bkg, in_axes=(None, None, 0, None, 0)
+        )(
+            self.s_mat, self.mu_bkg, obs, sigma_obs, a_mat
         )
 
     def encode_enr_feat(self, feat: Array) -> Tuple[Array, Array]:
@@ -170,11 +172,14 @@ class CLVMLinear(nn.Module):
             Tuple of mean and covariance of the latent variables.
         """
         sigma_obs = jnp.exp(self.log_sigma_obs.value)
-        return latent_posterior_from_feat_enr(
-            self.s_mat, self.w_mat, self.mu_enr, feat, sigma_obs
+        return jax.vmap(
+            latent_posterior_from_feat_enr, in_axes=(None, None, None, 0, None)
+        )(
+            self.s_mat, self.w_mat, self.mu_signal + self.mu_bkg, feat,
+            sigma_obs
         )
 
-    def encode_enr_obs(self, obs: Array) -> Tuple[Array, Array]:
+    def encode_enr_obs(self, obs: Array, a_mat: Array) -> Tuple[Array, Array]:
         """Encode the input data into the latent distribution.
 
         An a matrix has to be passed in as a variable for the observation.
@@ -188,63 +193,86 @@ class CLVMLinear(nn.Module):
         # The transformation matrix and log sigma_obs should be passed in as
         # variables.
         sigma_obs = jnp.exp(self.log_sigma_obs.value)
-        return latent_posterior_from_obs_enr(
-            self.s_mat, self.w_mat, self.mu_enr, obs, sigma_obs,
-            self.a_mat.value
+        return jax.vmap(
+            latent_posterior_from_obs_enr, in_axes=(None, None, None, 0, None, 0)
+        )(
+            self.s_mat, self.w_mat, self.mu_signal + self.mu_bkg, obs,
+            sigma_obs, a_mat
         )
 
     def decode_bkg_feat(self, z_latent: Array) -> Array:
         """Decode the latent variables into the feature space.
 
         Args:
-            z_latent: Latent variables for the background.
+            z_latent: Latent variables for the background with shape
+                [batch_size, latent_dim_z].
 
         Returns:
-            Decoded feature.
+            Decoded feature with shape [batch_size, features].
         """
-        return self.s_mat @ z_latent + self.mu_bkg
+        return jnp.einsum(
+            "ij,bj->bi", self.s_mat, z_latent
+        ) + self.mu_bkg
 
-    def decode_bkg_obs(self, z_latent: Array) -> Array:
+    def decode_bkg_obs(self, z_latent: Array, a_mat: Array) -> Array:
         """Decode the latent variables into the observation space.
 
         Args:
-            z_latent: Latent variables for the background.
+            z_latent: Latent variables for the background with shape
+                [batch_size, latent_dim_z].
+            a_mat: Linear transformation from feature to observation space with
+                shape [batch_size, obs_dim, features].
 
         Returns:
-            Decoded observation.
+            Decoded observation with shape [batch_size, obs_dim].
         """
-        return self.a_mat.value @ (self.s_mat @ z_latent + self.mu_bkg)
+        feat = self.decode_bkg_feat(z_latent)
+        return jnp.einsum('bij,bj->bi', a_mat, feat)
 
-    def decode_enr_feat(self, t_latent: Array) -> Array:
+    def decode_signal_feat(self, t_latent: Array) -> Array:
         """Decode the latent variables into the feature space.
 
         Args:
-            t_latent: Latent variables, assumed to be ordered z then t.
+            t_latent: Latent variables with shape [batch_size, latent_dim_t].
 
         Returns:
-            Decoded feature.
+            Decoded feature with shape [batch_size, features].
         """
-        return self.w_mat @ t_latent + self.mu_enr
+        return jnp.einsum(
+            "ij,bj->bi", self.w_mat, t_latent
+        ) + self.mu_signal
 
-    def decode_enr_obs(self, t_latent: Array) -> Array:
+    def decode_signal_obs(self, t_latent: Array, a_mat: Array) -> Array:
         """Decode the latent variables into the feature space.
 
         An a matrix has to be passed in as a variable for the observation.
 
         Args:
-            latents: Latent variables, assumed to be ordered z then t.
+            t_latent: Latent variables with shape [batch_size, latent_dim_t].
+            a_mat: Linear transformation from feature to observation space with
+                shape [batch_size, obs_dim, features].
 
         Returns:
-            Decoded observation.
+            Decoded observation with shape [batch_size, obs_dim].
         """
-        return self.a_mat.value @ (self.w_mat @ t_latent + self.mu_enr)
+        signal_feat = self.decode_signal_feat(t_latent)
+        return jnp.einsum('bij,bj->bi', a_mat, signal_feat)
 
     def _kl_div(self, mu: Array, sigma: Array) -> Array:
         """Calculate the KL divergence for the latent variables.
+
+        Args:
+            mu: Mean of the latent variables with shape
+                [batch_size, latent_dim].
+            sigma: Covariance of the latent variables with shape
+                [batch_size, latent_dim, latent_dim].
+
+        Returns:
+            KL divergence with shape [batch_size].
         """
-        trace = jnp.trace(sigma)
+        trace = jnp.trace(sigma, axis1=-2, axis2=-1)
         log_det = jnp.linalg.slogdet(sigma)[1]
-        return 0.5 * (trace + jnp.dot(mu, mu) - log_det)
+        return 0.5 * (trace + jnp.einsum('bi,bi->b', mu, mu) - log_det)
 
     def _recon_loss(
         self, x_recon: Array, x: Array
@@ -260,7 +288,7 @@ class CLVMLinear(nn.Module):
         """Calculate the loss for the background feature.
 
         Args:
-            feat: Background feature.
+            feat: Background feature with shape [batch_size, features].
 
         Returns:
             Loss.
@@ -271,27 +299,29 @@ class CLVMLinear(nn.Module):
         )
         feat_recon = self.decode_bkg_feat(latent_draw)
 
-        return (
+        return jnp.mean(
             self._kl_div(mu_latent, sigma_latent) +
             self._recon_loss(feat_recon, feat)
         )
 
-    def loss_bkg_obs(self, rng: Array, obs: Array) -> Array:
+    def loss_bkg_obs(self, rng: Array, obs: Array, a_mat: Array) -> Array:
         """Calculate the loss for the background observation.
 
         Args:
-            obs: Background observation.
+            obs: Background observation with shape [batch_size, obs_dim].
+            a_mat: Linear transformation from feature to observation space with
+                shape [batch_size, obs_dim, features].
 
         Returns:
             Loss.
         """
-        mu_latent, sigma_latent = self.encode_bkg_obs(obs)
+        mu_latent, sigma_latent = self.encode_bkg_obs(obs, a_mat)
         latent_draw = jax.random.multivariate_normal(
             rng, mu_latent, sigma_latent
         )
-        obs_recon = self.decode_bkg_obs(latent_draw)
+        obs_recon = self.decode_bkg_obs(latent_draw, a_mat)
 
-        return (
+        return jnp.mean(
             self._kl_div(mu_latent, sigma_latent) +
             self._recon_loss(obs_recon, obs)
         )
@@ -300,7 +330,7 @@ class CLVMLinear(nn.Module):
         """Calculate the loss for the enriched feature.
 
         Args:
-            feat: Enriched feature.
+            feat: Enriched feature with shape [batch_size, features].
 
         Returns:
             Loss.
@@ -313,24 +343,26 @@ class CLVMLinear(nn.Module):
             latent_draw, [self.latent_dim_z], axis=-1
         )
         feat_recon = (
-            self.decode_enr_feat(t_latent) + self.decode_bkg_feat(z_latent)
+            self.decode_signal_feat(t_latent) + self.decode_bkg_feat(z_latent)
         )
 
-        return (
+        return jnp.mean(
             self._kl_div(mu_latent, sigma_latent) +
             self._recon_loss(feat_recon, feat)
         )
 
-    def loss_enr_obs(self, rng: Array, obs: Array) -> Array:
+    def loss_enr_obs(self, rng: Array, obs: Array, a_mat: Array) -> Array:
         """Calculate the loss for the enriched observation.
 
         Args:
-            obs: Enriched observation.
+            obs: Enriched observation with shape [batch_size, obs_dim].
+            a_mat: Linear transformation from feature to observation space with
+                shape [batch_size, obs_dim, features].
 
         Returns:
             Loss.
         """
-        mu_latent, sigma_latent = self.encode_enr_obs(obs)
+        mu_latent, sigma_latent = self.encode_enr_obs(obs, a_mat)
         latent_draw = jax.random.multivariate_normal(
             rng, mu_latent, sigma_latent
         )
@@ -338,10 +370,11 @@ class CLVMLinear(nn.Module):
             latent_draw, [self.latent_dim_z], axis=-1
         )
         obs_recon = (
-            self.decode_enr_obs(t_latent) + self.decode_bkg_obs(z_latent)
+            self.decode_signal_obs(t_latent, a_mat) +
+            self.decode_bkg_obs(z_latent, a_mat)
         )
 
-        return (
+        return jnp.mean(
             self._kl_div(mu_latent, sigma_latent) +
             self._recon_loss(obs_recon, obs)
         )
@@ -416,27 +449,29 @@ class CLVMVAE(CLVMLinear):
         """Decode the latent variables into the feature space.
 
         Args:
-            z_latent: Latent variables for the background.
+            z_latent: Latent variables for the background with shape
+                [batch_size, latent_dim_z].
 
         Returns:
             Decoded feature.
         """
         return self.bkd_decoder(z_latent)
 
-    def decode_bkg_obs(self, z_latent: Array) -> Array:
+    def decode_bkg_obs(self, z_latent: Array, a_mat: Array) -> Array:
         """Decode the latent variables into the observation space.
 
         Args:
-            z_latent: Latent variables for the background.
+            z_latent: Latent variables for the background with shape
+                [batch_size, latent_dim_z].
+            a_mat: Linear transformation from feature to observation space with
+                shape [batch_size, obs_dim, features].
 
         Returns:
             Decoded observation.
         """
-        a_mat = self.variable(
-            "variables", "a_mat",
-            lambda: jnp.zeros((self.obs_dim, self.features))
-        )
-        return a_mat.value @ self.bkd_decoder(z_latent)
+        return jnp.einsum(
+            'bij,bjm,bm->bi', a_mat, self.s_mat, z_latent
+        ) + self.mu_bkg
 
     def decode_enr_feat(self, t_latent: Array) -> Array:
         """Decode the latent variables into the feature space.

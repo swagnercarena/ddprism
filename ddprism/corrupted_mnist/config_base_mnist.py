@@ -17,7 +17,4 @@ def get_config():
 
     config.sampling_kwargs.steps = 256
 
-    # wandb parameters
-    config.wandb_kwargs['project'] = 'mnist-test'
-
     return config

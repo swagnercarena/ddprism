@@ -1,4 +1,4 @@
-"Perform cLVM analysis of missing data with n_sources."
+"Perform CLVM analysis of missing data with n_sources."
 import os
 
 from absl import app, flags
@@ -12,7 +12,7 @@ from tqdm import tqdm
 import wandb
 
 from ddprism.metrics import metrics
-from ddprism.clvm import clvm, models
+from ddprism.clvm import clvm_utils, models
 from ddprism import plotting_utils
 from ddprism.rand_manifolds.random_manifolds import MAX_SPREAD
 from ddprism.rand_manifolds.scaling_n_models import load_dataset
@@ -47,13 +47,13 @@ def apply_model(rng, state, x, y, a_mat_x, a_mat_y, sigma_noise):
         )
         mu_tx, log_sigma_tx, mu_zx, log_sigma_zx, mu_zy, log_sigma_zy = latent_params
         
-        # Compute loss function
-        # Reconstruction loss
+        # Compute loss function.
+        # Reconstruction loss.
         loss = (optax.losses.squared_error(x, x_draws).sum(axis=-1) / 2 / sigma_noise**2)
         loss += (optax.losses.squared_error(y, y_draws).sum(axis=-1) / 2 / sigma_noise**2)
         loss = loss.mean()
         
-        # Prior loss
+        # Prior loss.
         kl_div = ((mu_tx**2 + jnp.exp(log_sigma_tx*2) - 2*log_sigma_tx) / 2).sum(axis=-1)
         kl_div += ((mu_zx**2 + jnp.exp(log_sigma_zx*2) - 2*log_sigma_zx) / 2).sum(axis=-1)
         kl_div += ((mu_zy**2 + jnp.exp(log_sigma_zy*2) - 2*log_sigma_zy) / 2).sum(axis=-1)
@@ -106,7 +106,7 @@ def run_clvm(config, workdir):
     # Run CLVM analysis for each source.
     metrics_dict = {}
     for source_index in range(config.n_sources):
-        # In cLVM language, tg is  target observation and bkg is background observation.
+        # In CLVM language, tg is  target observation and bkg is background observation.
         tg  = y_all[:, source_index].reshape(-1, config.obs_dim)
         a_mat_tg  = A_all[:, source_index]
 
@@ -120,7 +120,7 @@ def run_clvm(config, workdir):
         tg_dset_size = tg.shape[0]
         bkg_dset_size = bkg.shape[0]
 
-        # Define cVAE models for target and background latents.
+        # Define CVAE models for target and background latents.
         hidden_features = (config.hidden_feats_per_layer,)*config.hidden_layers
         
         encoder_tg = models.encoder_MLP(config.latent_dim_tg, hid_features=hidden_features)
@@ -131,17 +131,45 @@ def run_clvm(config, workdir):
         decoder_bkg = models.decoder_MLP(config.feat_dim, hid_features=hidden_features)
         cvae_bkg = models.cVAE(encoder_bkg, decoder_bkg)
 
-        # Define cLVM model.
-        clvm_model = clvm.clvmVAE(cvae_bkg, cvae_tg)
+        # Define CLVM model.
+        clvm_model = clvm_utils.CLVMVAE(features=config.feat_dim, 
+                                        latent_dim_z=config.latent_dim_bkg, 
+                                        latent_dim_t=config.latent_dim_tg, 
+                                        obs_dim=config.obs_dim,
+                                        enr_decoder=decoder_tg, 
+                                        bkd_decoder=decoder_bkg, 
+                                        enr_encoder=encoder_tg, 
+                                        bkd_encoder=encoder_bkg) #cvae_bkg, cvae_tg)
         # Initialize model parameters.
         rng, rng_state = jax.random.split(rng, 2)
+        '''
+        model = clvm_utils.CLVMLinear(
+            features=config.feat_dim,
+            latent_dim_z=config.latent_dim_bkg,
+            latent_dim_t=config.latent_dim_tg,
+            obs_dim=config.obs_dim
+        )
+        dummy_obs = jax.random.normal(rng, (config.obs_dim,))
+        # Initialize the model
+        variables = model.init(
+            rng_state, rng, dummy_obs, method=model.loss_enr_obs
+        )
+        '''
+        
+        dummy_obs = jax.random.normal(rng, (1, config.obs_dim,))
+        params_clvm = clvm_model.init(rng_state, 
+                                      rng, dummy_obs, 
+                                      #{'variables': {'a_mat': jnp.zeros((7, config.obs_dim, config.feat_dim))}},
+                                      method=clvm_model.loss_enr_obs)
+        print(params_clvm['variables'])
+        '''
         params_clvm = clvm_model.init(
                                     rng, rng_state, 
                                     jnp.ones((1, config.obs_dim)), jnp.ones((1,  config.obs_dim)),
                                     jnp.ones((1, 1, config.obs_dim, config.feat_dim)), 
                                     jnp.ones((1, 1, config.obs_dim, config.feat_dim))
                                 )
-
+        
         # Optimization loop parameters.
         steps_per_epoch = tg_dset_size // config.batch_size
         
@@ -297,12 +325,24 @@ def run_clvm(config, workdir):
             )
 
         # TODO: checkpoints
+        # Save the state parameters, losses, and metrics for each source.
+        ckpt = { 
+                'params': state.params, 
+                'losses': jnp.array(losses_per_epoch), 
+                f'metrics_{source_index+1}': metrics_dict
+                    
+                }
+        save_args = orbax_utils.save_args_from_target(ckpt)
+        checkpoint_manager.save(source_index+1, ckpt, save_kwargs={'save_args': save_args})
+
+    checkpoint_manager.close()  
+    '''
     wandb.finish()
     return metrics_dict
         
   
 def main(_):
-    """Run cLVM analysis with cVAE for each source by minimizing ELBO loss function."""
+    """Run CLVM analysis with CVAE for each source by minimizing ELBO loss function."""
     config = FLAGS.config
 
     workdir = FLAGS.workdir

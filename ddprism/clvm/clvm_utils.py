@@ -301,6 +301,27 @@ class CLVMLinear(nn.Module):
             rng, mu, sigma
         )
 
+    def _latent_draw_prior(self, rng: Array, num_samples: int) -> Array:
+        """Draw a sample from the prior distribution.
+        """
+        return jax.random.normal(
+            rng, (num_samples, self.latent_dim_z + self.latent_dim_t)
+        )
+
+    def _latent_split(self, latent_draw: Array) -> Tuple[Array, Array]:
+        """Split the latent variables into z and t.
+
+        Args:
+            latent_draw: Latent draw with shape [batch_size, latent_dim].
+
+        Returns:
+            Tuple of z and t latent variables with shape
+            [batch_size, latent_dim_z] and [batch_size, latent_dim_t].
+        """
+        return jnp.split(
+            latent_draw, [self.latent_dim_z], axis=-1
+        )
+
     def loss_bkg_feat(self, rng: Array, feat: Array) -> Array:
         """Calculate the loss for the background feature.
 
@@ -350,9 +371,7 @@ class CLVMLinear(nn.Module):
         """
         mu_latent, sigma_latent = self.encode_enr_feat(feat)
         latent_draw = self._latent_draw(rng, mu_latent, sigma_latent)
-        z_latent, t_latent = jnp.split(
-            latent_draw, [self.latent_dim_z], axis=-1
-        )
+        z_latent, t_latent = self._latent_split(latent_draw)
         feat_recon = (
             self.decode_signal_feat(t_latent) + self.decode_bkg_feat(z_latent)
         )
@@ -375,9 +394,7 @@ class CLVMLinear(nn.Module):
         """
         mu_latent, sigma_latent = self.encode_enr_obs(obs, a_mat)
         latent_draw = self._latent_draw(rng, mu_latent, sigma_latent)
-        z_latent, t_latent = jnp.split(
-            latent_draw, [self.latent_dim_z], axis=-1
-        )
+        z_latent, t_latent = self._latent_split(latent_draw)
         obs_recon = (
             self.decode_signal_obs(t_latent, a_mat) +
             self.decode_bkg_obs(z_latent, a_mat)

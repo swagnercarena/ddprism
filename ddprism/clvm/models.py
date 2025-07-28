@@ -1,114 +1,111 @@
-"""Models for encoder and decoder architectures."""
-
-import math
-from typing import Any, Callable, Mapping, Sequence, Tuple, Optional
+"""Models for CLVM encoder and decoder."""
+from typing import Callable, Tuple
 
 from flax import linen as nn
-import jax
 import jax.numpy as jnp
 from jax import Array
 from einops import rearrange
 
-class encoder_MLP(nn.Module):
-    r"""Creates an encoder multi-layer perceptron (MLP) model. Assumes that the input is a flattened image.
+class EncoderMLP(nn.Module):
+    r"""Creates an encoder MLP that assumes flattened features.
+
     Arguments:
         latent_features: The number of latent features.
         hid_features: The number of hidden features.
         activation: The activation function constructor.
-        bias: Whether to add a bias to the output.
+        normalize: Whether features are normalized between layers or not.
+        dropout_rate: Dropout rate for regularization. Default is 0.0.
     """
-    latent_features: int = 2
-    hid_features: list[int] = (128,)
-    activation: Callable[..., nn.Module] = nn.relu
-    bias: bool = True    
+    latent_features: int
+    hid_features: Tuple[int, ...] = (64, 64)
+    activation: Callable[[Array], Array] = nn.silu
+    normalize: bool = False
+    dropout_rate: float = 0.0
+
     @nn.compact
-    def __call__(self, x: Array) -> Array:
-        """MLP output.
+    def encode_feat(self, x: Array, train: bool = True) -> Array:
+        """Encode the input features into the latent distribution.
 
         Arguments:
             x: Input features with shape (*, features).
-            
+            train: Whether in training mode for dropout.
 
         Returns:
-            MLP output with shape (*, 2 * latent_features).
+            Latent mean and variance deviation for the input features.
         """
+        # Process through hidden layers
         for feat in self.hid_features:
-            x = nn.Dense(feat, use_bias=self.bias)(x)
-            x = self.activation(x)
 
-        # The output of the network are means and log of std for the latent dimensions.
-        x = nn.Dense(2*self.latent_features, use_bias=self.bias)(x)
-        return x
+            # Dense layer
+            x = nn.Dense(feat)(x)
+
+            # Activation
+            if self.activation is not None:
+                x = self.activation(x)
+
+            if self.normalize:
+                x = nn.LayerNorm()(x)
+
+            # Dropout
+            if self.dropout_rate > 0.0:
+                x = nn.Dropout(self.dropout_rate)(x, deterministic=not train)
+
+        # Final output layer
+        x = jnp.split(nn.Dense(self.latent_features * 2)(x), 2, axis=-1)
+        return x[0], jnp.exp(x[1])
+
+    @nn.compact
+    def encode_obs(self, x: Array, a_mat: Array) -> Array:
+        """Encode the input observations into the latent distribution.
+        """
+        a_mat = rearrange(a_mat, 'K L M -> K (L M)')
+        x = jnp.concatenate([x, a_mat], axis=-1)
+        return self.encode_feat(x)
 
 
-class decoder_MLP(nn.Module):
-    r"""Creates an decoder multi-layer perceptron (MLP) model. 
-    Assumes that the input is a vector of latent variables (salient and background).
-    Returns flattened image.
+class DecoderMLP(nn.Module):
+    r"""Creates an decoder MLP that assumes flattened features.
+
     Arguments:
         features: The number of output features.
         hid_features: The number of hidden features.
         activation: The activation function constructor.
-        bias :Whether to add a bias to the output.
+        normalize: Whether features are normalized between layers or not.
+        dropout_rate: Dropout rate for regularization. Default is 0.0.
     """
-    features: int = 784
-    hid_features: list[int] = (128,)
-    activation: Callable[..., nn.Module] = nn.relu
-    bias: bool = True    
+    features: int
+    hid_features: Tuple[int, ...] = (64, 64)
+    activation: Callable[[Array], Array] = nn.silu
+    normalize: bool = False
+    dropout_rate: float = 0.0
+
     @nn.compact
-    def __call__(self, x: Array) -> Array:
-        """MLP output.
+    def decode_feat(self, x: Array, train: bool = True) -> Array:
+        """Decode the latent variables into the feature space.
 
         Arguments:
-            x: Input vector of latent variables with shape (*, 2*latent_features).
+            x: Input features with shape (*, latent_features).
+            train: Whether in training mode for dropout.
 
         Returns:
-            MLP output with shape (*, features).
+            Decoded features with shape (*, features).
         """
+        # Process through hidden layers
         for feat in self.hid_features:
-            x = nn.Dense(feat, use_bias=self.bias)(x)
-            x = self.activation(x)
 
-        x = nn.Dense(self.features, use_bias=self.bias)(x)
-        return x
+            # Dense layer
+            x = nn.Dense(feat)(x)
 
-class cVAE(nn.Module):
-    """
-    """
-    encoder: nn.Module
-    decoder: nn.Module
-    
-    def setup(self):
-        self.latent_dim = self.encoder.latent_features
+            # Activation
+            if self.activation is not None:
+                x = self.activation(x)
 
-    # TODO: include dependence on matrix A
-    def encode(self, x: Array, a_mat: Optional[Array] = None) -> Tuple:
-        if a_mat is not None:
-            a_mat = a_mat.reshape(x.shape[0], -1)
-            x = jnp.concatenate((x, a_mat.reshape(x.shape[0], -1)), axis=1)
-            
-        out = self.encoder(x)
-        mu, log_sigma = jnp.split(out, 2, axis=-1)
-        return mu, log_sigma      
-        
-    def decode(self, x: Array, a_mat: Optional[Array] = None) -> Array:
-        out = self.decoder(x)
-        if a_mat is not None:
-            out = jnp.matmul(a_mat, out[..., None]).squeeze(axis=-1)
-        return out
-        
-               
-    def __call__(
-        self, rng: Array, x: Array, a_mat: Optional[Array] = None
-    ) -> Tuple: 
-        
-        # Generate new samples of the data.
-        # Sample latent variables.
-        mu, log_sigma = self.encode(x, a_mat)
-        eps = jax.random.normal(rng, shape=x.shape[0] + (self.encoder.latent_dim,))
-        z = mu + jnp.exp(log_sigma) * eps
-        
-        # Compute expectation for the data, given the latents.
-        x = self.decode(z, a_mat)
-        return x
-        
+            if self.normalize:
+                x = nn.LayerNorm()(x)
+
+            # Dropout
+            if self.dropout_rate > 0.0:
+                x = nn.Dropout(self.dropout_rate)(x, deterministic=not train)
+
+        # Final output layer
+        return nn.Dense(self.features)(x)

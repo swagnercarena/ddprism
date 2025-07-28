@@ -21,29 +21,36 @@ config_flags.DEFINE_config_file(
 
 def objective(trial, config, workdir):
     # CLVM hyperparameters.
-    latent_dim_z = trial.suggest_int("latent_dim_z", config.latent_dim_min, config.latent_dim_max)
-    latent_dim_t = trial.suggest_int("latent_dim_t", config.latent_dim_min, config.latent_dim_max)
-    
+    latent_dim_z = trial.suggest_int(
+        "latent_dim_z", config.latent_dim_min, config.latent_dim_max
+    )
+    latent_dim_t = trial.suggest_int(
+        "latent_dim_t", config.latent_dim_min, config.latent_dim_max
+    )
+
     # Optimization hyperparameters.
-    lr_init_val = trial.suggest_float("lr", config.lr_min, config.lr_max, log=True)
+    lr_init_val = trial.suggest_float(
+        "lr", config.lr_min, config.lr_max, log=True
+    )
     lr_schedule = trial.suggest_categorical("optimizer", ["linear", "cosine"])
 
     # Create a config for the trial.
     config_clvm = config.clvm_config
     config_clvm.wandb_kwargs['project']  = config.wandb_kwargs['project']
     config_clvm.wandb_kwargs['run_name'] = f'trial_{trial.number}'
-    
+
     config_clvm['latent_dim_z'] = latent_dim_z
     config_clvm['latent_dim_t'] = latent_dim_t
-    
+
     config_clvm['lr_init_val'] = lr_init_val
     config_clvm['lr_schedule'] = lr_schedule
-    
+
     # Run CLVM.
     metrics = run_clvm(config, workdir)
     trial.set_user_attr("trial_metrics", metrics)
-    
-    return metrics[f'div_post_2']
+
+    return metrics['div_post_2']
+
 
 def main(_):
     """Optimize over CLVM parameters.
@@ -60,8 +67,7 @@ def main(_):
     print(f'Working directory: {workdir}')
 
     # Define objective function
-    objective_fn = objective
-    objective_fn = partial(objective_fn, config=config, workdir=workdir)
+    objective_fn = partial(objective, config=config, workdir=workdir)
 
     # Create a new study.
     study_name = config.wandb_kwargs.get('project')

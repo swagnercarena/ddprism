@@ -22,7 +22,7 @@ def get_config():
     # wandb parameters
     config.wandb_kwargs = ConfigDict(
         {
-            'project': 'clvm_optuna_test', 'mode': 'online',
+            'project': 'clvm_optuna_rand_cont', 'mode': 'online',
             'run_name': None
         }
     )

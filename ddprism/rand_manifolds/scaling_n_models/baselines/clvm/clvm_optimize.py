@@ -32,7 +32,6 @@ def objective(trial, config, workdir):
     lr_init_val = trial.suggest_float(
         "lr", config.lr_min, config.lr_max, log=True
     )
-    lr_schedule = trial.suggest_categorical("optimizer", ["linear", "cosine"])
 
     # Create a config for the trial.
     config_clvm = config.clvm_config
@@ -43,7 +42,6 @@ def objective(trial, config, workdir):
     config_clvm['latent_dim_t'] = latent_dim_t
 
     config_clvm['lr_init_val'] = lr_init_val
-    config_clvm['lr_schedule']['type'] = lr_schedule
 
     # Run CLVM.
     metrics = run_clvm(

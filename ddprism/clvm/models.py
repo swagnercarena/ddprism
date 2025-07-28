@@ -2,7 +2,6 @@
 from typing import Callable, Mapping, Sequence, Tuple
 
 from flax import linen as nn
-import jax
 import jax.numpy as jnp
 from jax import Array
 from einops import rearrange
@@ -346,7 +345,7 @@ class EncoderFlatUNet(nn.Module):
         return self._encode_feat(x, train=train)
 
     @nn.compact
-    def encode_obs(self, x: Array, a_mat: Array) -> Array:
+    def encode_obs(self, x: Array, a_mat: Array, train: bool = True) -> Array:
         """Encode the input observations into the latent distribution.
 
         Arguments:
@@ -359,13 +358,13 @@ class EncoderFlatUNet(nn.Module):
         """
         x = self.reshape(x)
         a_mat = rearrange(
-            a_mat, 'K (I J) (H W) -> K H W (I J)', H=self.image_shape[0],
+            a_mat, 'K I (H W) -> K H W I', H=self.image_shape[0],
             W=self.image_shape[1]
         )
         # Turn the observation dimension into channels.
         x = jnp.concatenate([x, a_mat], axis=-1)
 
-        return self.encode_feat(x)
+        return self._encode_feat(x, train=train)
 
 
 class DecoderFlatUNet(nn.Module):
@@ -416,7 +415,8 @@ class DecoderFlatUNet(nn.Module):
         )
         upsample_factor = [2.0, 2.0]
 
-        # Broadcast vector of latent features to an image of shape (*, init_kernel_size, hid_channels[-1]).
+        # Broadcast vector to be compatible with the last output shape of the
+        # encoder UNet.
         x = nn.Dense(in_features[0] * in_features[1] * in_features[2])(x)
         x = x.reshape((-1,) + in_features)
 

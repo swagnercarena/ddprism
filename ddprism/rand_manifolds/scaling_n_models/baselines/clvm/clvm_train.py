@@ -35,7 +35,7 @@ def train_step(state, rng, enr_obs, bkg_obs, a_mat_enr, a_mat_bkg, other_vars):
 
         # Enriched observation loss
         enr_loss = state.apply_fn(
-            variables, rng_bkg, enr_obs, a_mat_enr, method='loss_enr_obs'
+            variables, rng_enr, enr_obs, a_mat_enr, method='loss_enr_obs'
         )
         # Background observation loss
         bkg_loss = state.apply_fn(
@@ -222,8 +222,8 @@ def run_clvm(config, workdir):
             prior_samples[:config.sinkhorn_samples],
             x_all[:config.sinkhorn_samples, source_index]
         )
-        metrics_dict['div_post'] = float(div_post)
-        metrics_dict['div_prior'] = float(div_prior)
+        metrics_dict[f'div_post_{source_index}'] = float(div_post)
+        metrics_dict[f'div_prior_{source_index}'] = float(div_prior)
 
         # PQ mass
         pqmass_post = metrics.pq_mass(
@@ -234,8 +234,8 @@ def run_clvm(config, workdir):
             prior_samples[:config.pqmass_samples],
             x_all[:config.pqmass_samples, source_index]
         )
-        metrics_dict['pqmass_post'] = float(pqmass_post)
-        metrics_dict['pqmass_prior'] = float(pqmass_prior)
+        metrics_dict[f'pqmass_post_{source_index}'] = float(pqmass_post)
+        metrics_dict[f'pqmass_prior_{source_index}'] = float(pqmass_prior)
 
         # PSNR
         psnr_post = metrics.psnr(
@@ -243,7 +243,7 @@ def run_clvm(config, workdir):
             x_all[:config.psnr_samples, source_index],
             max_spread=MAX_SPREAD
         )
-        metrics_dict['psnr_post'] = float(psnr_post)
+        metrics_dict[f'psnr_post_{source_index}'] = float(psnr_post)
 
         # Save checkpoint
         ckpt = {

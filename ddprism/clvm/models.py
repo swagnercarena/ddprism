@@ -1,5 +1,5 @@
 """Models for CLVM encoder and decoder."""
-from typing import Callable, Tuple
+from typing import Callable, Mapping, Sequence, Tuple
 
 from flax import linen as nn
 import jax.numpy as jnp
@@ -112,6 +112,7 @@ class DecoderMLP(nn.Module):
         # Final output layer
         return nn.Dense(self.features)(x)
 
+
 class ResBlock(nn.Module):
     r"""Creates a residual block with dropout.
 
@@ -140,7 +141,7 @@ class ResBlock(nn.Module):
         Returns:
             Residual block output.
         """
-        
+
         # Defaults to normalization of 1.
         y = nn.LayerNorm(use_bias=True, use_scale=True)(x)
         y = self.activation(y)
@@ -161,6 +162,7 @@ class ResBlock(nn.Module):
         y = nn.Conv(self.channels, self.kernel_size, padding='VALID')(y)
 
         return y + x
+
 
 class AttBlock(nn.Module):
     r"""Creates a residual self-attention block with adaLN-Zero modulation
@@ -183,7 +185,6 @@ class AttBlock(nn.Module):
     out_features: int = None
     use_bias: bool = True
 
-
     @nn.compact
     def __call__(self, x: Array, train: bool = True) -> Array:
         """Call attention block on image and modulate by time.
@@ -195,9 +196,9 @@ class AttBlock(nn.Module):
         Returns:
             Residual block output.
         """
-        
+
         y = nn.LayerNorm(use_bias=True, use_scale=True)(x)
-        
+
         # Flatten the spatial dimensions.
         y = rearrange(y, '... H W C -> ... (H W) C')
         y = nn.MultiHeadDotProductAttention(
@@ -211,6 +212,7 @@ class AttBlock(nn.Module):
 
         return y + x
 
+
 class EncoderUNet(nn.Module):
     r"""Creates an encoder with the architecture similar to that of the first half of UNet.
 
@@ -219,8 +221,6 @@ class EncoderUNet(nn.Module):
         hid_channels: Number of channels used in each level.
         hid_blocks: Number of block used in each level.
         kernel_size: Defines the kernel size used for all convolutional blocks.
-        emb_features: Size of the embedding vector that encodes the time
-            features.
         heads: Number of heads to use for the attention block of each level.
             If a level is not included it will have no attention block.
         dropout_rate: Dropout rate applied in the ResBlock. Attention block has
@@ -234,7 +234,6 @@ class EncoderUNet(nn.Module):
     hid_channels: Sequence[int]
     hid_blocks: Sequence[int]
     kernel_size: Sequence[int] = (3, 3)
-    #emb_features: int = 64
     heads: Mapping[str, int] = None
     dropout_rate: float = 0.0
     activation: Callable[..., nn.Module] = nn.silu
@@ -297,7 +296,7 @@ class EncoderUNet(nn.Module):
         )(x, train)
         if str(len(self.hid_blocks) - 1) in heads:
             x = AttBlock(
-                self.hid_channels[-1], 
+                self.hid_channels[-1],
                 self.dropout_rate, heads[str(len(self.hid_blocks) - 1)]
             )(x, train)
         x = ResBlock(
@@ -308,11 +307,11 @@ class EncoderUNet(nn.Module):
         # Flatten the image.
         x = x.reshape(x.shape[0], -1)
         x = self.activation(x)
-        
+
         # Final output layer
         x = jnp.split(nn.Dense(self.latent_features * 2)(x), 2, axis=-1)
         return x[0], jnp.exp(x[1])
-        
+
     @nn.compact
     def encode_obs(self, x: Array, a_mat: Array) -> Array:
         """Encode the input observations into the latent distribution.
@@ -320,11 +319,12 @@ class EncoderUNet(nn.Module):
         x = jnp.concatenate([x, a_mat[..., None]], axis=-1)
         return self.encode_feat(x)
 
+
 class DecoderUNet(nn.Module):
     r"""Creates a decoder with the architecture similar to that of the second half of UNet.
 
     Arguments:
-        image_shape: Shape of the image. 
+        image_shape: Shape of the image.
         hid_channels: Number of channels used in each level.
         hid_blocks: Number of block used in each level.
         kernel_size: Defines the kernel size used for all convolutional blocks.
@@ -335,7 +335,7 @@ class DecoderUNet(nn.Module):
         activation: Activation function for resnet blocks.
 
     Notes:
-        
+
     """
     image_shape: Tuple
     hid_channels: Sequence[int]
@@ -362,19 +362,19 @@ class DecoderUNet(nn.Module):
 
         out_channels = self.image_shape[2]
         features = self.image_shape[0] * self.image_shape[1] * self.image_shape[2]
-        
+
         strides = [2 for k in self.kernel_size]
         padding = [(k // 2, k // 2) for k in self.kernel_size]
 
-        
+
         # Broadcast vector of latent features to an image of shape (*, init_kernel_size, hid_channels[-1]).
         x = nn.Dense(features=features)(x)
         x = x.reshape((-1,) + self.in_shape)
         x = nn.Dense(features=self.hid_channels[-1])(x)
-    
+
         # Ascend from lowest dimension to image.
         for i, n_blocks in reversed(list(enumerate(self.hid_blocks))):
-            
+
             # Residual convolutions without upsampling.
             for _ in range(n_blocks):
                 x = ResBlock(
@@ -385,7 +385,7 @@ class DecoderUNet(nn.Module):
                 # Add attention blocks if specified.
                 if str(i) in heads:
                     x = AttBlock(
-                         self.hid_channels[i], 
+                         self.hid_channels[i],
                          self.dropout_rate, heads[str(i)]
                      )(x, train)
 
@@ -395,6 +395,6 @@ class DecoderUNet(nn.Module):
             else:
                 # For all other layers conduct an upsampling iteration.
                 x = Resample([float (s) for s in strides], method='nearest')(x)
-               
+
         x = self.activation(x)
         return x

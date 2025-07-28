@@ -314,16 +314,24 @@ class CLVMClassTests(chex.TestCase):
             latent_dim_z=self.latent_dim_z,
             latent_dim_t=self.latent_dim_t,
             obs_dim=self.obs_dim,
-            signal_decoder=models.DecoderMLP(features=self.features),
-            bkg_decoder=models.DecoderMLP(features=self.features),
-            signal_encoder=models.EncoderMLP(latent_features=self.latent_dim_t),
-            bkg_encoder=models.EncoderMLP(latent_features=self.latent_dim_z)
+            signal_decoder=models.DecoderMLP(
+                features=self.features, dropout_rate=0.1
+            ),
+            bkg_decoder=models.DecoderMLP(
+                features=self.features, dropout_rate=0.1
+            ),
+            signal_encoder=models.EncoderMLP(
+                latent_features=self.latent_dim_t, dropout_rate=0.1
+            ),
+            bkg_encoder=models.EncoderMLP(
+                latent_features=self.latent_dim_z, dropout_rate=0.1
+            )
         )
 
         # Create test data
         rng = jax.random.PRNGKey(2)
         batch_size = 4
-        feat_key, obs_key, a_key, init_key = jax.random.split(rng, 4)
+        rng_drop, obs_key, a_key, init_key = jax.random.split(rng, 4)
         obs = jax.random.normal(obs_key, (batch_size, self.obs_dim))
         a_mat = jax.random.normal(
             a_key, (batch_size, self.obs_dim, self.features)
@@ -333,18 +341,24 @@ class CLVMClassTests(chex.TestCase):
         variables = model.init(
             init_key, init_key, obs, a_mat, method='loss_enr_obs'
         )
-        apply_fn = self.variant(model.apply, static_argnames=['method'])
+        apply_fn = self.variant(
+            model.apply, static_argnames=['method', 'train']
+        )
 
         # Test the expected parameters are present.
         self.assertEqual(variables['variables']['log_sigma_obs'].shape, (1,))
 
         # Test encode methods
-        mu_z, sigma_z = apply_fn(variables, obs, a_mat, method='encode_bkg_obs')
+        mu_z, sigma_z = apply_fn(
+            variables, obs, a_mat, method='encode_bkg_obs',
+            rngs={'dropout': rng_drop}
+        )
         self.assertEqual(mu_z.shape, (batch_size, self.latent_dim_z))
         self.assertEqual(sigma_z.shape, (batch_size, self.latent_dim_z))
 
         mu_zt, sigma_zt = apply_fn(
-            variables, obs, a_mat, method='encode_enr_obs'
+            variables, obs, a_mat, method='encode_enr_obs',
+            rngs={'dropout': rng_drop}
         )
         self.assertEqual(
             mu_zt.shape, (batch_size, self.latent_dim_z + self.latent_dim_t,)
@@ -358,11 +372,15 @@ class CLVMClassTests(chex.TestCase):
         z_sample = jax.random.normal(init_key, (batch_size, self.latent_dim_z,))
         t_sample = jax.random.normal(init_key, (batch_size, self.latent_dim_t,))
 
-        feat_decoded = apply_fn(variables, z_sample, method='decode_bkg_feat')
+        feat_decoded = apply_fn(
+            variables, z_sample, method='decode_bkg_feat',
+            rngs={'dropout': rng_drop}
+        )
         self.assertEqual(feat_decoded.shape, (batch_size, self.features))
 
         feat_decoded_enr = apply_fn(
-            variables, t_sample, method='decode_signal_feat'
+            variables, t_sample, method='decode_signal_feat',
+            rngs={'dropout': rng_drop}
         )
         self.assertEqual(feat_decoded_enr.shape, (batch_size, self.features))
 
@@ -370,25 +388,29 @@ class CLVMClassTests(chex.TestCase):
             [jnp.eye(self.obs_dim) for _ in range(batch_size)]
         )
         obs_decoded = apply_fn(
-            variables, z_sample, a_mat, method='decode_bkg_obs'
+            variables, z_sample, a_mat, method='decode_bkg_obs',
+            rngs={'dropout': rng_drop}
         )
         self.assertEqual(obs_decoded.shape, (batch_size, self.obs_dim))
         self.assertTrue(jnp.allclose(obs_decoded, feat_decoded))
 
         obs_decoded_enr = apply_fn(
-            variables, t_sample, a_mat, method='decode_signal_obs'
+            variables, t_sample, a_mat, method='decode_signal_obs',
+            rngs={'dropout': rng_drop}
         )
         self.assertEqual(obs_decoded_enr.shape, (batch_size, self.obs_dim))
         self.assertTrue(jnp.allclose(obs_decoded_enr, feat_decoded_enr))
 
         # Test loss functions don't crash
         loss_bkg = apply_fn(
-            variables, init_key, obs, a_mat, method='loss_bkg_obs'
+            variables, init_key, obs, a_mat, method='loss_bkg_obs',
+            train=False
         )
         self.assertEqual(loss_bkg.shape, ())
 
         loss_enr = apply_fn(
-            variables, init_key, obs, a_mat, method='loss_enr_obs'
+            variables, init_key, obs, a_mat, method='loss_enr_obs',
+            train=False
         )
         self.assertEqual(loss_enr.shape, ())
 

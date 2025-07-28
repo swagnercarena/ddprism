@@ -86,15 +86,18 @@ def train_step(state, rng, enr_obs, bkg_obs, a_mat_enr, a_mat_bkg, other_vars):
     def loss_fn(params):
         # Collect the relevant variables.
         variables = {'params': params, 'variables': other_vars}
-        rng_bkg, rng_enr = jax.random.split(rng)
+        rng_bkg, rng_enr, rng = jax.random.split(rng, 3)
+        rng_drop_bkg, rng_drop_enr = jax.random.split(rng)
 
         # Enriched observation loss
         enr_loss = state.apply_fn(
-            variables, rng_enr, enr_obs, a_mat_enr, method='loss_enr_obs'
+            variables, rng_enr, enr_obs, a_mat_enr, method='loss_enr_obs',
+            train=True, rngs={'dropout': rng_drop_bkg}
         )
         # Background observation loss
         bkg_loss = state.apply_fn(
-            variables, rng_bkg, bkg_obs, a_mat_bkg, method='loss_bkg_obs'
+            variables, rng_bkg, bkg_obs, a_mat_bkg, method='loss_bkg_obs',
+            train=True, rngs={'dropout': rng_drop_enr}
         )
         return enr_loss + bkg_loss
 
@@ -112,19 +115,19 @@ def get_posterior_samples(
 
     # Encode the enriched observations to get posterior parameters
     latents = state.apply_fn(
-        variables, enr_obs, a_mat_enr, method='encode_enr_obs'
+        variables, enr_obs, a_mat_enr, method='encode_enr_obs', train=False
     )
     latent_draw = state.apply_fn(
-        variables, rng, latents[0], latents[1], method='_latent_draw'
+        variables, rng, latents[0], latents[1], method='_latent_draw',
     )
     z_latent, t_latent = state.apply_fn(
         variables, latent_draw, method='_latent_split'
     )
     signal_feat = state.apply_fn(
-        variables, t_latent, method='decode_signal_feat'
+        variables, t_latent, method='decode_signal_feat', train=False
     )
     bkg_feat = state.apply_fn(
-        variables, z_latent, method='decode_bkg_feat'
+        variables, z_latent, method='decode_bkg_feat', train=False
     )
 
     return bkg_feat, signal_feat
@@ -137,16 +140,16 @@ def get_prior_samples(rng, state, num_samples, other_vars):
 
     # Sample from prior (standard normal)
     latent_draw = state.apply_fn(
-        variables, rng, num_samples, method='_latent_draw_prior'
+        variables, rng, num_samples, method='_latent_draw_prior', train=False
     )
     z_latent, t_latent = state.apply_fn(
         variables, latent_draw, method='_latent_split'
     )
     signal_feat = state.apply_fn(
-        variables, t_latent, method='decode_signal_feat'
+        variables, t_latent, method='decode_signal_feat', train=False
     )
     bkg_feat = state.apply_fn(
-        variables, z_latent, method='decode_bkg_feat'
+        variables, z_latent, method='decode_bkg_feat', train=False
     )
 
     return bkg_feat, signal_feat

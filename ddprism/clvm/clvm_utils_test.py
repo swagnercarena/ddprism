@@ -404,13 +404,13 @@ class CLVMClassTests(chex.TestCase):
         # Test loss functions don't crash
         loss_bkg = apply_fn(
             variables, init_key, obs, a_mat, method='loss_bkg_obs',
-            rngs={'dropout': rng_drop}
+            train=False
         )
         self.assertEqual(loss_bkg.shape, ())
 
         loss_enr = apply_fn(
             variables, init_key, obs, a_mat, method='loss_enr_obs',
-            rngs={'dropout': rng_drop}
+            train=False
         )
         self.assertEqual(loss_enr.shape, ())
 

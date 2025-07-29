@@ -236,6 +236,7 @@ def run_clvm(config_clvm, workdir):
             rng_comp, 0.0, 1.0, imagenet_path, config_mnist.dataset_size
         )
         image_shape = mnist_pure.shape[1:]
+        mnist_pure_flat = mnist_pure.reshape(mnist_pure.shape[0], -1)
 
         # Pull the pure sample and save to disk.
         grass_pure_ident, _ = datasets.get_corrupted_mnist(
@@ -361,26 +362,25 @@ def run_clvm(config_clvm, workdir):
             ),
             mnist_pure[:config_mnist.pq_mass_samples]
         )
-        mnist_pure = mnist_pure.reshape(mnist_pure.shape[0], -1)
         metrics_dict['mnist_pqmass_post'] = metrics.pq_mass(
             post_samples[:config_mnist.pq_mass_samples],
-            mnist_pure[:config_mnist.pq_mass_samples]
+            mnist_pure_flat[:config_mnist.pq_mass_samples]
         )
         metrics_dict['mnist_pqmass_prior'] = metrics.pq_mass(
             prior_samples[:config_mnist.pq_mass_samples],
-            mnist_pure[:config_mnist.pq_mass_samples]
+            mnist_pure_flat[:config_mnist.pq_mass_samples]
         )
         metrics_dict['mnist_divergence_post'] = metrics.sinkhorn_divergence(
             post_samples[:config_mnist.sinkhorn_div_samples],
-            mnist_pure[:config_mnist.sinkhorn_div_samples]
+            mnist_pure_flat[:config_mnist.sinkhorn_div_samples]
         )
         metrics_dict['mnist_divergence_prior'] = metrics.sinkhorn_divergence(
             prior_samples[:config_mnist.sinkhorn_div_samples],
-            mnist_pure[:config_mnist.sinkhorn_div_samples]
+            mnist_pure_flat[:config_mnist.sinkhorn_div_samples]
         )
         metrics_dict['mnist_psnr_post'] = metrics.psnr(
             post_samples[:config_mnist.psnr_samples],
-            mnist_pure[:config_mnist.psnr_samples],
+            mnist_pure_flat[:config_mnist.psnr_samples],
             max_spread=datasets.MAX_SPREAD
         )
         wandb.log(metrics_dict, commit=False)

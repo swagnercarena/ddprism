@@ -74,9 +74,14 @@ def create_posterior_train_state(
             training_utils.create_denoiser_gaussian(config)
         )
     else:
-        denoiser_models.append(
-            training_utils.create_denoiser_unet(config, image_shape)
-        )
+        if config.model_type == 'mlp':
+            denoiser_models.append(
+                training_utils.create_denoiser_timemlp(config)
+            )
+        elif config.model_type == 'unet':
+            denoiser_models.append(
+                training_utils.create_denoiser_unet(config, image_shape)
+            )
 
     # Joint Denoiser
     feat_dim = image_shape[0] * image_shape[1] * image_shape[2]
@@ -346,8 +351,8 @@ def main(_):
 
         # Get the statistics of the separate mnist sample.
         rng_ppca, rng = jax.random.split(rng)
-        _, mnist_cov = utils.ppca(rng_ppca, x_post[1], rank=4)
-        # Only update the covariance matrix.
+        mnist_mean, mnist_cov = utils.ppca(rng_ppca, x_post[1], rank=4)
+        post_state_params['denoiser_models_1']['mu_x'] = mnist_mean
         post_state_params['denoiser_models_1']['cov_x'] = mnist_cov
 
     # Save our initial samples.
@@ -368,15 +373,22 @@ def main(_):
     learning_rate_fn = training_utils.get_learning_rate_schedule(
         config, config.lr_init_val, config.epochs
     )
-    state_unet = training_utils.create_train_state_unet(
-        rng_state, config, learning_rate_fn, image_shape
-    )
-    state_unet = jax_utils.replicate(state_unet)
-    post_state_unet = create_posterior_train_state(
+    
+    if config.model_type == "unet":
+        state_model = training_utils.create_train_state_unet(
+            rng_state, config, learning_rate_fn, image_shape
+        )
+    elif config.model_type == "mlp":
+        state_model = training_utils.create_train_state_timemlp(
+            rng_state, config, learning_rate_fn, 
+        )
+    state_model = jax_utils.replicate(state_model)
+    post_state_model = create_posterior_train_state(
         rng_state, config, config_grass, image_shape,
     )
-    post_state_unet = jax_utils.replicate(post_state_unet)
-    ema = training_utils.EMA(jax_utils.unreplicate(state_unet).params)
+    post_state_model = jax_utils.replicate(post_state_model)
+    ema = training_utils.EMA(jax_utils.unreplicate(state_model).params)
+        
 
     # Create the apply_model function with config
     apply_model = apply_model_with_config(config)
@@ -414,13 +426,13 @@ def main(_):
 
             rng_apply = jax.random.split(rng_apply, jax.local_device_count())
             grads, loss = apply_model( # pylint: disable=not-callable
-                state_unet, x_post[1][batch_i], rng_apply
+                state_model, x_post[1][batch_i], rng_apply
             )
-            state_unet = update_model( # pylint: disable=not-callable
-                state_unet, grads
+            state_model = update_model( # pylint: disable=not-callable
+                state_model, grads
             )
             ema = ema.update(
-                jax_utils.unreplicate(state_unet).params,
+                jax_utils.unreplicate(state_model).params,
                 config.ema_decay ** (
                     config.em_laps * config.epochs /
                     (lap * config.epochs + epoch + 1)
@@ -446,7 +458,7 @@ def main(_):
             x_post.append(
                 jax.device_put(
                     sample_pmap(
-                        corrupt_batch, rng_pmap, post_state_unet, params, A_mat,
+                        corrupt_batch, rng_pmap, post_state_model, params, A_mat,
                         cov_y
                     ),
                     jax.local_devices(backend="cpu")[0]
@@ -478,7 +490,7 @@ def main(_):
             x_prior.append(
                 jax.device_put(
                     sample_prior_pmap(
-                        rng_pmap, state_unet, params['denoiser_models_1']
+                        rng_pmap, state_model, params['denoiser_models_1']
                     ),
                     jax.local_devices(backend="cpu")[0]
                 )
@@ -499,7 +511,7 @@ def main(_):
 
         # Save the state, ema, and some samples.
         ckpt = {
-            'state': jax.device_get(jax_utils.unreplicate(state_unet)),
+            'state': jax.device_get(jax_utils.unreplicate(state_model)),
             'x_post': jax.device_get(x_post), 'x_prior': jax.device_get(x_prior),
             'ema_params': jax.device_get(ema.params), 'config': config.to_dict(),
             'metrics_post': jax.device_get(metrics_dict_post),
@@ -512,11 +524,18 @@ def main(_):
         )
 
         # Initialize our next state with the current parameters.
-        state_unet = training_utils.create_train_state_unet(
-            rng_state, config, learning_rate_fn, image_shape,
-            params={'params': ema.params}
-        )
-        state_unet = jax_utils.replicate(state_unet)
+        if config.model_type == 'unet':
+            state_model = training_utils.create_train_state_unet(
+                rng_state, config, learning_rate_fn, image_shape,
+                params={'params': ema.params}
+            )
+        elif config.model_type == 'mlp':
+            state_model = training_utils.create_train_state_timemlp(
+                rng_state, config, learning_rate_fn, 
+                params={'params': ema.params}
+            )
+            
+        state_model = jax_utils.replicate(state_model)
 
 
 if __name__ == '__main__':

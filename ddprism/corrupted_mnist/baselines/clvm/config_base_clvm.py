@@ -7,7 +7,6 @@ def get_config():
     config = ConfigDict()
 
     # Configuration files for grass and MNIST digits
-    config.config_grass = config_base_grass.get_config()
     config.config_mnist = config_base_mnist.get_config()
 
     # Model type: "linear" or "vae"

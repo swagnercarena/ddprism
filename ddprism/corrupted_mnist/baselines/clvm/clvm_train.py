@@ -191,10 +191,8 @@ def run_clvm(config_clvm, workdir):
         Dictionary of metrics.
     """
     config_mnist = config_clvm.config_mnist
-    config_grass = config_clvm.config_grass
     imagenet_path = FLAGS.imagenet_path
-    rng = jax.random.PRNGKey(config_grass.rng_key)
-    classifier_path = FLAGS.mnist_classifier_path
+    rng = jax.random.PRNGKey(config_mnist.rng_key)
 
     # Set up wandb logging and checkpointing.
     wandb.init(
@@ -209,14 +207,14 @@ def run_clvm(config_clvm, workdir):
     with jax.default_device(jax.local_devices(backend="cpu")[0]):
         # Get our observations, mixing matrix, and covariance.
         enr_obs, _, _, _ = datasets.get_dataset(
-            rng_dataset, 1.0, config_grass.mnist_amp, config_grass.sigma_y,
-            config_grass.downsampling_ratios, config_grass.sample_batch_size,
-            imagenet_path, config_grass.dataset_size
+            rng_dataset, 1.0, config_mnist.mnist_amp, config_mnist.sigma_y,
+            config_mnist.downsampling_ratios, config_clvm.sample_batch_size,
+            imagenet_path, config_mnist.dataset_size
         )
         bkg_obs, _, _, _ = datasets.get_dataset(
-            rng_dataset, 1.0, 0.0, config_grass.sigma_y,
-            config_grass.downsampling_ratios, config_grass.sample_batch_size,
-            imagenet_path, config_grass.dataset_size
+            rng_dataset, 1.0, 0.0, config_mnist.sigma_y,
+            config_mnist.downsampling_ratios, config_clvm.sample_batch_size,
+            imagenet_path, config_mnist.dataset_size
         )
 
         # Save the observations, A matrix, and covariance.
@@ -230,13 +228,13 @@ def run_clvm(config_clvm, workdir):
 
         # Get pure samples for Gaussian initialization and metric calculations.
         mnist_pure, _ = datasets.get_corrupted_mnist(
-            rng_comp, 0.0, 1.0, imagenet_path, config_grass.dataset_size
+            rng_comp, 0.0, 1.0, imagenet_path, config_mnist.dataset_size
         )
         image_shape = mnist_pure.shape[1:]
 
         # Pull the pure sample and save to disk.
         grass_pure_ident, _ = datasets.get_corrupted_mnist(
-            rng_dataset, 1.0, 0.0, imagenet_path, config_grass.dataset_size
+            rng_dataset, 1.0, 0.0, imagenet_path, config_mnist.dataset_size
         )
         np.save(os.path.join(workdir, 'grass_pure_ident.npy'), grass_pure_ident)
 
@@ -281,7 +279,7 @@ def run_clvm(config_clvm, workdir):
     variables = clvm_model.init(
         rng_init, rng, dummy_obs, method='loss_enr_feat'
     )
-    other_vars = {'log_sigma_obs': jnp.log(config_grass.sigma_y)}
+    other_vars = {'log_sigma_obs': jnp.log(config_mnist.sigma_y)}
 
     # Set up our training state.
     learning_rate_fn = training_utils.get_learning_rate_schedule(

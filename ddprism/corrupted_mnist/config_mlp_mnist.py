@@ -18,6 +18,13 @@ def get_config():
     config.sampling_kwargs.steps = 256
 
     # Model type: "mlp" or "unet"
-    config.model_type = 'unet'
+    config.model_type = 'mlp'
+
+    # Parameters for the Denoisers.
+    config.hidden_features = (256, 256, 256)
+    config.time_mlp_normalize = True
+    config.time_conditioning = 'film'
+    config.dropout_rate = 0.1
+    config.emb_features = 128
 
     return config

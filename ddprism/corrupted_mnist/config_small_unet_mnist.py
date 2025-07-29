@@ -17,6 +17,9 @@ def get_config():
 
     config.sampling_kwargs.steps = 256
 
+    # Model type: "mlp" or "unet"
+    config.model_type = 'unet'
+
     # Parameters for the Denoisers.
     config.hid_channels = (16, 32)
     config.hid_blocks = (2, 2)

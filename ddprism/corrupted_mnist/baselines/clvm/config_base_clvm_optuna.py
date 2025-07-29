@@ -26,6 +26,5 @@ def get_config():
             'run_name': None
         }
     )
-    config.log_figure = True
 
     return config

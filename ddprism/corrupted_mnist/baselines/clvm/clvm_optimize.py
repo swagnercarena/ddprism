@@ -40,7 +40,6 @@ def objective(trial, config, workdir):
 
     config_clvm['latent_dim_z'] = latent_dim_z
     config_clvm['latent_dim_t'] = latent_dim_t
-
     config_clvm['lr_init_val'] = lr_init_val
 
     # Run CLVM.

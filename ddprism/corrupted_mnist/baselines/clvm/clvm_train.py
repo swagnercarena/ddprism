@@ -8,6 +8,7 @@ from flax.training import train_state
 import jax
 import jax.numpy as jnp
 from ml_collections import config_flags
+import numpy as np
 from orbax.checkpoint import CheckpointManager, CheckpointManagerOptions
 from orbax.checkpoint import PyTreeCheckpointer
 from tqdm import tqdm
@@ -269,7 +270,7 @@ def run_clvm(config_clvm, workdir):
     rng_class, rng = jax.random.split(rng)
     mnist_model, mnist_params = image_metrics.get_model(
         FLAGS.mnist_classifier_path, rng_class,
-        **config.get('mnist_classifier_kwargs', {})
+        **config_mnist.get('mnist_classifier_kwargs', {})
     )
 
     # Initialize model parameters.
@@ -285,7 +286,7 @@ def run_clvm(config_clvm, workdir):
     # Set up our training state.
     learning_rate_fn = training_utils.get_learning_rate_schedule(
         config_clvm, config_clvm.lr_init_val,
-        config_clvm.epochs * config_clvm.batch_size
+        config_clvm.epochs * config_clvm.steps_per_epoch
     )
     optimizer = training_utils.get_optimizer(config_clvm)(learning_rate_fn)
     state = train_state.TrainState.create(
@@ -319,66 +320,66 @@ def run_clvm(config_clvm, workdir):
             # Log loss
             wandb.log({'loss': loss})
 
-    # Generate posterior samples.
-    rng, rng_post = jax.random.split(rng)
-    _, post_samples = get_posterior_samples(
-        rng_post, state, enr_obs, other_vars, config_clvm.batch_size
-    )
+        # Generate posterior samples.
+        rng, rng_post = jax.random.split(rng)
+        _, post_samples = get_posterior_samples(
+            rng_post, state, enr_obs, other_vars, config_clvm.batch_size
+        )
 
-    # Generate prior samples
-    rng, rng_prior = jax.random.split(rng)
-    num_samples = max(
-        config_mnist.psnr_samples, config_mnist.sinkhorn_div_samples,
-        config_mnist.pq_mass_samples, config_mnist.fcd_samples
-    )
-    _, prior_samples = get_prior_samples(
-        rng_prior, state, num_samples, other_vars, config_clvm.batch_size
-    )
+        # Generate prior samples
+        rng, rng_prior = jax.random.split(rng)
+        num_samples = max(
+            config_mnist.psnr_samples, config_mnist.sinkhorn_div_samples,
+            config_mnist.pq_mass_samples, config_mnist.fcd_samples
+        )
+        _, prior_samples = get_prior_samples(
+            rng_prior, state, num_samples, other_vars, config_clvm.batch_size
+        )
 
 
-    # Compute and log metrics.
-    metrics_dict = {}
-    metrics_dict['mnist_fcd_post'] = image_metrics.fcd_mnist(
-        mnist_model, mnist_params,
-        rearrange(
-            post_samples[:config.pq_mass_samples],
-            '... (H W C) -> ... H W C',
-            H=image_shape[0], W=image_shape[1], C=image_shape[2]
-        ),
-        mnist_pure[:config.pq_mass_samples]
-    )
-    metrics_dict['mnist_fcd_post'] = image_metrics.fcd_mnist(
-        mnist_model, mnist_params,
-        rearrange(
-            prior_samples[:config.pq_mass_samples],
-            '... (H W C) -> ... H W C',
-            H=image_shape[0], W=image_shape[1], C=image_shape[2]
-        ),
-        mnist_pure[:config.pq_mass_samples]
-    )
-    mnist_pure = mnist_pure.reshape(mnist_pure.shape[0], -1)
-    metrics_dict['mnist_pqmass_post'] = metrics.pq_mass(
-        post_samples[:config.pq_mass_samples],
-        mnist_pure[:config.pq_mass_samples]
-    )
-    metrics_dict['mnist_pqmass_prior'] = metrics.pq_mass(
-        prior_samples[:config.pq_mass_samples],
-        mnist_pure[:config.pq_mass_samples]
-    )
-    metrics_dict['mnist_divergence_post'] = metrics.sinkhorn_divergence(
-        post_samples[:config.sinkhorn_div_samples],
-        mnist_pure[:config.sinkhorn_div_samples]
-    )
-    metrics_dict['mnist_divergence_prior'] = metrics.sinkhorn_divergence(
-        prior_samples[:config.sinkhorn_div_samples],
-        mnist_pure[:config.sinkhorn_div_samples]
-    )
-    metrics_dict['mnist_psnr_post'] = metrics.psnr(
-        post_samples[:config.psnr_samples],
-        mnist_pure[:config.psnr_samples],
-        max_spread=datasets.MAX_SPREAD
-    )
-    wandb.log(metrics_dict, commit=False)
+        # Compute and log metrics.
+        metrics_dict = {}
+        metrics_dict['mnist_fcd_post'] = image_metrics.fcd_mnist(
+            mnist_model, mnist_params,
+            rearrange(
+                post_samples[:config_mnist.pq_mass_samples],
+                '... (H W C) -> ... H W C',
+                H=image_shape[0], W=image_shape[1], C=image_shape[2]
+            ),
+            mnist_pure[:config_mnist.pq_mass_samples]
+        )
+        metrics_dict['mnist_fcd_prior'] = image_metrics.fcd_mnist(
+            mnist_model, mnist_params,
+            rearrange(
+                prior_samples[:config_mnist.pq_mass_samples],
+                '... (H W C) -> ... H W C',
+                H=image_shape[0], W=image_shape[1], C=image_shape[2]
+            ),
+            mnist_pure[:config_mnist.pq_mass_samples]
+        )
+        mnist_pure = mnist_pure.reshape(mnist_pure.shape[0], -1)
+        metrics_dict['mnist_pqmass_post'] = metrics.pq_mass(
+            post_samples[:config_mnist.pq_mass_samples],
+            mnist_pure[:config_mnist.pq_mass_samples]
+        )
+        metrics_dict['mnist_pqmass_prior'] = metrics.pq_mass(
+            prior_samples[:config_mnist.pq_mass_samples],
+            mnist_pure[:config_mnist.pq_mass_samples]
+        )
+        metrics_dict['mnist_divergence_post'] = metrics.sinkhorn_divergence(
+            post_samples[:config_mnist.sinkhorn_div_samples],
+            mnist_pure[:config_mnist.sinkhorn_div_samples]
+        )
+        metrics_dict['mnist_divergence_prior'] = metrics.sinkhorn_divergence(
+            prior_samples[:config_mnist.sinkhorn_div_samples],
+            mnist_pure[:config_mnist.sinkhorn_div_samples]
+        )
+        metrics_dict['mnist_psnr_post'] = metrics.psnr(
+            post_samples[:config_mnist.psnr_samples],
+            mnist_pure[:config_mnist.psnr_samples],
+            max_spread=datasets.MAX_SPREAD
+        )
+        wandb.log(metrics_dict, commit=False)
 
     # Save parameters to a checkpoint.
     checkpointer = PyTreeCheckpointer()

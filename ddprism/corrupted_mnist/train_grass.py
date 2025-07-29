@@ -278,6 +278,7 @@ def main(_):
         x_post = rearrange(
             jnp.stack(x_post, axis=0), 'K M N ... -> (K M N) ...'
         )
+        x_post = jnp.clip(x_post, min=0., max=1.)
         # Ge the statistics of the separate grass sample.
         rng_ppca, rng = jax.random.split(rng)
         grass_mean, grass_cov = utils.ppca(rng_ppca, x_post, rank=2)
@@ -378,6 +379,7 @@ def main(_):
         x_post = rearrange(
             jnp.stack(x_post, axis=0), 'K M N ... -> (K M N) ...'
         )
+        x_post = jnp.clip(x_post, min=0., max=1.)
         # Calculate and log metrics for our posterior sample.
         metrics_dict_post = compute_metrics(
             config, x_post, grass_pure, grass_pure_ident, dist='post'
@@ -406,6 +408,7 @@ def main(_):
         x_prior = rearrange(
             jnp.stack(x_prior, axis=0), 'K M N ... -> (K M N) ...'
         )
+        x_prior = jnp.clip(x_prior, min=0., max=1.)
         # Calculate and log metrics for our posterior sample.
         metrics_dict_prior = compute_metrics(
             config, x_prior, grass_pure, grass_pure_ident, dist='prior'

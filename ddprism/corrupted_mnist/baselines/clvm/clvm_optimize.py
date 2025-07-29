@@ -10,8 +10,6 @@ import optuna
 
 from clvm_train import run_clvm
 
-jax.config.update("jax_enable_x64", True)
-
 FLAGS = flags.FLAGS
 
 flags.DEFINE_string('workdir_optuna', None, 'working directory.')
@@ -40,16 +38,29 @@ def objective(trial, config, workdir):
 
     config_clvm['latent_dim_z'] = latent_dim_z
     config_clvm['latent_dim_t'] = latent_dim_t
-
     config_clvm['lr_init_val'] = lr_init_val
 
     # Run CLVM.
-    metrics = run_clvm(
-        config_clvm, os.path.join(workdir, f'trial_{trial.number}')
-    )
-    trial.set_user_attr("trial_metrics", metrics)
+    os.makedirs(os.path.join(workdir, f'trial_{trial.number}'), exist_ok=True)
 
-    return metrics['div_post_2']
+    try:
+        metrics = run_clvm(
+            config_clvm, os.path.join(workdir, f'trial_{trial.number}')
+        )
+        trial.set_user_attr("trial_metrics", metrics)
+        trial.set_user_attr("trial_failed", False)
+        return float(metrics['mnist_fcd_post'])
+
+    except Exception as e:
+        # Log the error and return a large penalty value
+        print(f"Trial {trial.number} failed with error: {str(e)}")
+        trial.set_user_attr("trial_failed", True)
+        trial.set_user_attr("trial_error", str(e))
+        trial.set_user_attr("trial_metrics", None)
+
+        # Return a large penalty value (since we're minimizing)
+        # This tells Optuna this parameter combination was very bad
+        return float('inf')
 
 
 def main(_):
@@ -73,7 +84,8 @@ def main(_):
     study_name = config.wandb_kwargs.get('project')
     storage_name = f"sqlite:///{workdir}/{study_name}.db"
     study = optuna.create_study(
-        study_name=study_name, storage=storage_name, direction="minimize"
+        study_name=study_name, storage=storage_name, direction="minimize",
+        load_if_exists=True
     )
 
     # Run optuna.

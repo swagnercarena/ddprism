@@ -13,7 +13,7 @@ def get_config():
 
     # Parameters for CLVM trials.
     config.latent_dim_min = 1
-    config.latent_dim_max = 5
+    config.latent_dim_max = 20
 
     # Optimization hyperparameters
     config.lr_min = 1e-5
@@ -26,6 +26,5 @@ def get_config():
             'run_name': None
         }
     )
-    config.log_figure = True
 
     return config

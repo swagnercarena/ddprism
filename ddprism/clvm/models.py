@@ -357,11 +357,15 @@ class EncoderFlatUNet(nn.Module):
             Latent mean and variance deviation for the input observations.
         """
         x = self.reshape(x)
-        a_mat = rearrange(
-            a_mat, 'K I (H W) -> K H W I', H=self.image_shape[0],
-            W=self.image_shape[1]
-        )
-        # Turn the observation dimension into channels.
+        # Summarize the A matrix with the norm of each column.
+        a_mat = jnp.sqrt(jnp.sum(
+            rearrange(
+                a_mat, 'K (H W) N -> K H W N', H=self.image_shape[0],
+                W=self.image_shape[1]
+            ) ** 2,
+            axis=-1, keepdims=True
+        ))
+        # Turn the A matrix into a second channel.
         x = jnp.concatenate([x, a_mat], axis=-1)
 
         return self._encode_feat(x, train=train)
@@ -422,6 +426,13 @@ class DecoderFlatUNet(nn.Module):
 
         # Ascend from lowest dimension to image.
         for i, n_blocks in reversed(list(enumerate(self.hid_blocks))):
+
+            # Convolve the upsampling to the right number of channels.
+            x = reflect_pad(x, self.kernel_size)
+            x = nn.Conv(
+                self.hid_channels[i], kernel_size=self.kernel_size,
+                padding='VALID'
+            )(x)
 
             # Residual convolutions without upsampling.
             for _ in range(n_blocks):

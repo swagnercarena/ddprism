@@ -457,6 +457,10 @@ def main(_):
             jnp.stack(x_post, axis=0), 'K M N ... -> (K M N) ...'
         )
         x_post = jnp.split(x_post, 2, axis=-1)
+        
+        # Limit the range of values of MNIST digits between 0 and 1.
+        x_post[1] = jnp.minimum(x_post[1], 1.)
+        x_post[1] = jnp.maximum(x_post[1], 0.)
 
         # Calculate and log metrics for our posterior sample.
         metrics_dict_post = compute_metrics(

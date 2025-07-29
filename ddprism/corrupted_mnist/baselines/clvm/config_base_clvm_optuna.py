@@ -17,7 +17,7 @@ def get_config():
 
     # Optimization hyperparameters
     config.lr_min = 1e-5
-    config.lr_max = 1e-2
+    config.lr_max = 1e-3
 
     # wandb parameters
     config.wandb_kwargs = ConfigDict(

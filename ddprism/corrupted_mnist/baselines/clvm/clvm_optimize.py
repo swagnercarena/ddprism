@@ -42,12 +42,25 @@ def objective(trial, config, workdir):
 
     # Run CLVM.
     os.makedirs(os.path.join(workdir, f'trial_{trial.number}'), exist_ok=True)
-    metrics = run_clvm(
-        config_clvm, os.path.join(workdir, f'trial_{trial.number}')
-    )
-    trial.set_user_attr("trial_metrics", metrics)
 
-    return float(metrics['mnist_fcd_post'])
+    try:
+        metrics = run_clvm(
+            config_clvm, os.path.join(workdir, f'trial_{trial.number}')
+        )
+        trial.set_user_attr("trial_metrics", metrics)
+        trial.set_user_attr("trial_failed", False)
+        return float(metrics['mnist_fcd_post'])
+
+    except Exception as e:
+        # Log the error and return a large penalty value
+        print(f"Trial {trial.number} failed with error: {str(e)}")
+        trial.set_user_attr("trial_failed", True)
+        trial.set_user_attr("trial_error", str(e))
+        trial.set_user_attr("trial_metrics", None)
+
+        # Return a large penalty value (since we're minimizing)
+        # This tells Optuna this parameter combination was very bad
+        return float('inf')
 
 
 def main(_):

@@ -49,7 +49,7 @@ def objective(trial, config, workdir):
     )
     trial.set_user_attr("trial_metrics", metrics)
 
-    return metrics['div_post_2']
+    return float(metrics['div_post_2'])
 
 
 def main(_):

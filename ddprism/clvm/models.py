@@ -357,11 +357,15 @@ class EncoderFlatUNet(nn.Module):
             Latent mean and variance deviation for the input observations.
         """
         x = self.reshape(x)
-        a_mat = rearrange(
-            a_mat, 'K I (H W) -> K H W I', H=self.image_shape[0],
-            W=self.image_shape[1]
-        )
-        # Turn the observation dimension into channels.
+        # Summarize the A matrix with the norm of each column.
+        a_mat = jnp.sqrt(jnp.sum(
+            rearrange(
+                a_mat, 'K (H W) N -> K H W N', H=self.image_shape[0],
+                W=self.image_shape[1]
+            ) ** 2,
+            axis=-1, keepdims=True
+        ))
+        # Turn the A matrix into a second channel.
         x = jnp.concatenate([x, a_mat], axis=-1)
 
         return self._encode_feat(x, train=train)

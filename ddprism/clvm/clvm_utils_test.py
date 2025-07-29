@@ -429,14 +429,14 @@ class CLVMClassTests(chex.TestCase):
             obs_dim=self.obs_dim,  # Keep same obs_dim as other tests
             signal_decoder=models.DecoderFlatUNet(
                 image_shape=image_shape,
-                hid_channels=[4, 4],
+                hid_channels=[4, 8],
                 hid_blocks=[1, 1],
                 heads={'1': 2},
                 dropout_rate=0.1
             ),
             bkg_decoder=models.DecoderFlatUNet(
                 image_shape=image_shape,
-                hid_channels=[4, 4],
+                hid_channels=[4, 8],
                 hid_blocks=[1, 1],
                 heads={'1': 2},
                 dropout_rate=0.1
@@ -444,14 +444,14 @@ class CLVMClassTests(chex.TestCase):
             signal_encoder=models.EncoderFlatUNet(
                 latent_features=self.latent_dim_t,
                 image_shape=image_shape,
-                hid_channels=[4, 4],
+                hid_channels=[4, 8],
                 hid_blocks=[1, 1],
                 dropout_rate=0.1
             ),
             bkg_encoder=models.EncoderFlatUNet(
                 latent_features=self.latent_dim_z,
                 image_shape=image_shape,
-                hid_channels=[16, 32],
+                hid_channels=[4, 8],
                 hid_blocks=[1, 1],
                 dropout_rate=0.1
             )

@@ -423,6 +423,13 @@ class DecoderFlatUNet(nn.Module):
         # Ascend from lowest dimension to image.
         for i, n_blocks in reversed(list(enumerate(self.hid_blocks))):
 
+            # Convolve the upsampling to the right number of channels.
+            x = reflect_pad(x, self.kernel_size)
+            x = nn.Conv(
+                self.hid_channels[i], kernel_size=self.kernel_size,
+                padding='VALID'
+            )(x)
+
             # Residual convolutions without upsampling.
             for _ in range(n_blocks):
                 x = ResBlock(

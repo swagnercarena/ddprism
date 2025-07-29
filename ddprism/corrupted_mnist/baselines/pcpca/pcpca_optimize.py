@@ -67,7 +67,8 @@ def main(_):
     study_name = config.wandb_kwargs.get('project')
     storage_name = f"sqlite:///{workdir}/{study_name}.db"
     study = optuna.create_study(
-        study_name=study_name, storage=storage_name, direction="minimize"
+        study_name=study_name, storage=storage_name, direction="minimize",
+        load_if_exists=True
     )
 
     # Run optuna.

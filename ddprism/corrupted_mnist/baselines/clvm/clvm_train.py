@@ -294,7 +294,7 @@ def run_clvm(config_clvm, workdir):
     )
 
     for _ in tqdm(range(config_clvm.epochs), desc='Training CLVM'):
-        for _ in range(config_clvm.steps_per_epoch):
+        for _ in tqdm(range(config_clvm.steps_per_epoch), desc='Steps', leave=False):
             # Get random batch for enriched data
             rng, rng_batch_enr = jax.random.split(rng)
             batch_i = jax.random.randint(
@@ -321,7 +321,7 @@ def run_clvm(config_clvm, workdir):
         # Generate posterior samples.
         rng, rng_post = jax.random.split(rng)
         _, post_samples = get_posterior_samples(
-            rng_post, state, enr_obs, other_vars, config_clvm.batch_size
+            rng_post, state, enr_obs, other_vars, config_clvm.sample_batch_size
         )
 
         # Generate prior samples
@@ -331,7 +331,8 @@ def run_clvm(config_clvm, workdir):
             config_mnist.pq_mass_samples, config_mnist.fcd_samples
         )
         _, prior_samples = get_prior_samples(
-            rng_prior, state, num_samples, other_vars, config_clvm.batch_size
+            rng_prior, state, num_samples, other_vars,
+            config_clvm.sample_batch_size
         )
 
 

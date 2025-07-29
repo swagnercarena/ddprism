@@ -7,7 +7,6 @@ from flax import linen as nn
 from flax.training import train_state
 import jax
 import jax.numpy as jnp
-import matplotlib.pyplot as plt
 from ml_collections import config_flags
 from orbax.checkpoint import CheckpointManager, CheckpointManagerOptions
 from orbax.checkpoint import PyTreeCheckpointer

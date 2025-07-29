@@ -208,12 +208,12 @@ def run_clvm(config_clvm, workdir):
         # Get our observations, mixing matrix, and covariance.
         enr_obs, _, _, _ = datasets.get_dataset(
             rng_dataset, 1.0, config_mnist.mnist_amp, config_mnist.sigma_y,
-            config_mnist.downsampling_ratios, config_clvm.sample_batch_size,
+            config_mnist.downsampling_ratios, config_mnist.sample_batch_size,
             imagenet_path, config_mnist.dataset_size
         )
         bkg_obs, _, _, _ = datasets.get_dataset(
             rng_dataset, 1.0, 0.0, config_mnist.sigma_y,
-            config_mnist.downsampling_ratios, config_clvm.sample_batch_size,
+            config_mnist.downsampling_ratios, config_mnist.sample_batch_size,
             imagenet_path, config_mnist.dataset_size
         )
 

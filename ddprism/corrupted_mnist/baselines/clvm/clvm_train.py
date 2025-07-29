@@ -344,7 +344,7 @@ def run_clvm(config_clvm, workdir):
 
         # Compute and log metrics.
         metrics_dict = {}
-        metrics_dict['mnist_fcd_post'] = image_metrics.fcd_mnist(
+        metrics_dict['mnist_fcd_post'] = float(image_metrics.fcd_mnist(
             mnist_model, mnist_params,
             rearrange(
                 post_samples[:config_mnist.pq_mass_samples],
@@ -352,8 +352,8 @@ def run_clvm(config_clvm, workdir):
                 H=image_shape[0], W=image_shape[1], C=image_shape[2]
             ),
             mnist_pure[:config_mnist.pq_mass_samples]
-        )
-        metrics_dict['mnist_fcd_prior'] = image_metrics.fcd_mnist(
+        ))
+        metrics_dict['mnist_fcd_prior'] = float(image_metrics.fcd_mnist(
             mnist_model, mnist_params,
             rearrange(
                 prior_samples[:config_mnist.pq_mass_samples],
@@ -361,28 +361,28 @@ def run_clvm(config_clvm, workdir):
                 H=image_shape[0], W=image_shape[1], C=image_shape[2]
             ),
             mnist_pure[:config_mnist.pq_mass_samples]
-        )
-        metrics_dict['mnist_pqmass_post'] = metrics.pq_mass(
+        ))
+        metrics_dict['mnist_pqmass_post'] = float(metrics.pq_mass(
             post_samples[:config_mnist.pq_mass_samples],
             mnist_pure_flat[:config_mnist.pq_mass_samples]
-        )
-        metrics_dict['mnist_pqmass_prior'] = metrics.pq_mass(
+        ))
+        metrics_dict['mnist_pqmass_prior'] = float(metrics.pq_mass(
             prior_samples[:config_mnist.pq_mass_samples],
             mnist_pure_flat[:config_mnist.pq_mass_samples]
-        )
-        metrics_dict['mnist_divergence_post'] = metrics.sinkhorn_divergence(
+        ))
+        metrics_dict['mnist_divergence_post'] = float(metrics.sinkhorn_divergence(
             post_samples[:config_mnist.sinkhorn_div_samples],
             mnist_pure_flat[:config_mnist.sinkhorn_div_samples]
-        )
-        metrics_dict['mnist_divergence_prior'] = metrics.sinkhorn_divergence(
+        ))
+        metrics_dict['mnist_divergence_prior'] = float(metrics.sinkhorn_divergence(
             prior_samples[:config_mnist.sinkhorn_div_samples],
             mnist_pure_flat[:config_mnist.sinkhorn_div_samples]
-        )
-        metrics_dict['mnist_psnr_post'] = metrics.psnr(
+        ))
+        metrics_dict['mnist_psnr_post'] = float(metrics.psnr(
             post_samples[:config_mnist.psnr_samples],
             mnist_pure_flat[:config_mnist.psnr_samples],
             max_spread=datasets.MAX_SPREAD
-        )
+        ))
         wandb.log(metrics_dict, commit=False)
 
     # Save parameters to a checkpoint.

@@ -43,6 +43,7 @@ def objective(trial, config, workdir):
     config_clvm['lr_init_val'] = lr_init_val
 
     # Run CLVM.
+    os.makedirs(os.path.join(workdir, f'trial_{trial.number}'), exist_ok=True)
     metrics = run_clvm(
         config_clvm, os.path.join(workdir, f'trial_{trial.number}')
     )

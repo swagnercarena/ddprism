@@ -9,13 +9,13 @@ def get_config():
 
     # Training parameters.
     config.gaussian_em_laps = 16
+    config.diffusion_em_laps = 128
 
     # Sampling arguments. Default is to have the number of model evaluations
-    # per sampling step be the same for gibbs and joint (therefore fewer
-    # steps for gibbs).
+    # per sampling be 8x for gibbs versus joint
     config.sampling_kwargs = ConfigDict(
         {
-            'steps': 32, 'sampler': 'pc', 'corrections': 1, 'tau': 1e-1,
+            'steps': 256, 'sampler': 'pc', 'corrections': 1, 'tau': 1e-1,
             'gibbs_rounds': 512
         }
     )

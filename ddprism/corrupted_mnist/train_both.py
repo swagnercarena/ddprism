@@ -74,11 +74,11 @@ def create_posterior_train_state(
             training_utils.create_denoiser_gaussian(config)
         )
     else:
-        if config.model_type == 'mlp':
+        if config.get('model_type', 'unet') == 'mlp':
             denoiser_models.append(
                 training_utils.create_denoiser_timemlp(config)
             )
-        elif config.model_type == 'unet':
+        elif config.get('model_type', 'unet') == 'unet':
             denoiser_models.append(
                 training_utils.create_denoiser_unet(config, image_shape)
             )
@@ -351,8 +351,8 @@ def main(_):
 
         # Get the statistics of the separate mnist sample.
         rng_ppca, rng = jax.random.split(rng)
-        mnist_mean, mnist_cov = utils.ppca(rng_ppca, x_post[1], rank=4)
-        post_state_params['denoiser_models_1']['mu_x'] = mnist_mean
+        _, mnist_cov = utils.ppca(rng_ppca, x_post[1], rank=4)
+        # Only update the covariance matrix.
         post_state_params['denoiser_models_1']['cov_x'] = mnist_cov
 
     # Save our initial samples.
@@ -373,14 +373,14 @@ def main(_):
     learning_rate_fn = training_utils.get_learning_rate_schedule(
         config, config.lr_init_val, config.epochs
     )
-    
-    if config.model_type == "unet":
+
+    if config.get('model_type', 'unet') == "unet":
         state_model = training_utils.create_train_state_unet(
             rng_state, config, learning_rate_fn, image_shape
         )
-    elif config.model_type == "mlp":
+    elif config.get('model_type', 'unet') == "mlp":
         state_model = training_utils.create_train_state_timemlp(
-            rng_state, config, learning_rate_fn, 
+            rng_state, config, learning_rate_fn,
         )
     state_model = jax_utils.replicate(state_model)
     post_state_model = create_posterior_train_state(
@@ -388,7 +388,7 @@ def main(_):
     )
     post_state_model = jax_utils.replicate(post_state_model)
     ema = training_utils.EMA(jax_utils.unreplicate(state_model).params)
-        
+
 
     # Create the apply_model function with config
     apply_model = apply_model_with_config(config)
@@ -524,17 +524,17 @@ def main(_):
         )
 
         # Initialize our next state with the current parameters.
-        if config.model_type == 'unet':
+        if config.get('model_type', 'unet') == 'unet':
             state_model = training_utils.create_train_state_unet(
                 rng_state, config, learning_rate_fn, image_shape,
                 params={'params': ema.params}
             )
-        elif config.model_type == 'mlp':
+        elif config.get('model_type', 'unet') == 'mlp':
             state_model = training_utils.create_train_state_timemlp(
-                rng_state, config, learning_rate_fn, 
+                rng_state, config, learning_rate_fn,
                 params={'params': ema.params}
             )
-            
+
         state_model = jax_utils.replicate(state_model)
 
 

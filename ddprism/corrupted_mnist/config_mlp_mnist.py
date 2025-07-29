@@ -21,10 +21,11 @@ def get_config():
     config.model_type = 'mlp'
 
     # Parameters for the Denoisers.
-    config.hidden_features = (256, 256, 256)
+    config.hidden_features = (2048, 2048, 2048, 2048, 2048)
     config.time_mlp_normalize = True
     config.time_conditioning = 'film'
     config.dropout_rate = 0.1
     config.emb_features = 128
+    config.feat_dim = 784
 
     return config

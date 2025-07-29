@@ -346,7 +346,7 @@ def main(_):
 
         # Get the statistics of the separate mnist sample.
         rng_ppca, rng = jax.random.split(rng)
-        mnist_mean, mnist_cov = utils.ppca(rng_ppca, x_post[1], rank=4)
+        _, mnist_cov = utils.ppca(rng_ppca, x_post[1], rank=4)
         # Only update the covariance matrix.
         post_state_params['denoiser_models_1']['cov_x'] = mnist_cov
 

@@ -414,6 +414,152 @@ class CLVMClassTests(chex.TestCase):
         )
         self.assertEqual(loss_enr.shape, ())
 
+    @chex.all_variants
+    def test_clvm_vae_unet(self):
+        """Test that CLVMVAE with UNet models can be instantiated and called without errors."""
+
+        # Define image shape and parameters
+        image_shape = (8, 8, 1)  # Small test images: 8x8 RGB
+        features = image_shape[0] * image_shape[1] * image_shape[2]  # 192 flattened features
+
+        model = clvm_utils.CLVMVAE(
+            features=features,
+            latent_dim_z=self.latent_dim_z,
+            latent_dim_t=self.latent_dim_t,
+            obs_dim=self.obs_dim,  # Keep same obs_dim as other tests
+            signal_decoder=models.DecoderFlatUNet(
+                image_shape=image_shape,
+                hid_channels=[4, 4],
+                hid_blocks=[1, 1],
+                heads={'1': 2},
+                dropout_rate=0.1
+            ),
+            bkg_decoder=models.DecoderFlatUNet(
+                image_shape=image_shape,
+                hid_channels=[4, 4],
+                hid_blocks=[1, 1],
+                heads={'1': 2},
+                dropout_rate=0.1
+            ),
+            signal_encoder=models.EncoderFlatUNet(
+                latent_features=self.latent_dim_t,
+                image_shape=image_shape,
+                hid_channels=[4, 4],
+                hid_blocks=[1, 1],
+                dropout_rate=0.1
+            ),
+            bkg_encoder=models.EncoderFlatUNet(
+                latent_features=self.latent_dim_z,
+                image_shape=image_shape,
+                hid_channels=[16, 32],
+                hid_blocks=[1, 1],
+                dropout_rate=0.1
+            )
+        )
+
+        # Create test data
+        rng = jax.random.PRNGKey(3)  # Use different key from other tests
+        batch_size = 4
+        rng_drop, obs_key, a_key, init_key = jax.random.split(rng, 4)
+
+        # Create image data (flattened)
+        images = jax.random.normal(obs_key, (batch_size, features))
+
+        # Create observation transformation matrix
+        a_mat = jax.random.normal(
+            a_key, (batch_size, features, features)
+        )
+
+        # Initialize the model
+        variables = model.init(
+            init_key, init_key, images, a_mat, method='loss_enr_obs'
+        )
+        apply_fn = self.variant(
+            model.apply, static_argnames=['method', 'train']
+        )
+
+        # Test the expected parameters are present
+        self.assertEqual(variables['variables']['log_sigma_obs'].shape, (1,))
+
+        # Test encode methods with flattened images
+        mu_z, sigma_z = apply_fn(
+            variables, images, a_mat, method='encode_bkg_obs',
+            rngs={'dropout': rng_drop}
+        )
+        self.assertEqual(mu_z.shape, (batch_size, self.latent_dim_z))
+        self.assertEqual(sigma_z.shape, (batch_size, self.latent_dim_z))
+
+        mu_zt, sigma_zt = apply_fn(
+            variables, images, a_mat, method='encode_enr_obs',
+            rngs={'dropout': rng_drop}
+        )
+        self.assertEqual(
+            mu_zt.shape, (batch_size, self.latent_dim_z + self.latent_dim_t,)
+        )
+        self.assertEqual(
+            sigma_zt.shape,
+            (batch_size, self.latent_dim_z + self.latent_dim_t)
+        )
+
+        # Test decode methods
+        z_sample = jax.random.normal(init_key, (batch_size, self.latent_dim_z,))
+        t_sample = jax.random.normal(init_key, (batch_size, self.latent_dim_t,))
+
+        feat_decoded = apply_fn(
+            variables, z_sample, method='decode_bkg_feat',
+            rngs={'dropout': rng_drop}
+        )
+        self.assertEqual(feat_decoded.shape, (batch_size, features))
+
+        feat_decoded_enr = apply_fn(
+            variables, t_sample, method='decode_signal_feat',
+            rngs={'dropout': rng_drop}
+        )
+        self.assertEqual(feat_decoded_enr.shape, (batch_size, features))
+
+        mu_z_obs, sigma_z_obs = apply_fn(
+            variables, images, a_mat, method='encode_bkg_obs',
+            rngs={'dropout': rng_drop}
+        )
+        self.assertEqual(mu_z_obs.shape, (batch_size, self.latent_dim_z))
+        self.assertEqual(sigma_z_obs.shape, (batch_size, self.latent_dim_z))
+
+        obs_decoded = apply_fn(
+            variables, z_sample, a_mat, method='decode_bkg_obs',
+            rngs={'dropout': rng_drop}
+        )
+        self.assertEqual(obs_decoded.shape, (batch_size, features))
+
+        obs_decoded_enr = apply_fn(
+            variables, t_sample, a_mat, method='decode_signal_obs',
+            rngs={'dropout': rng_drop}
+        )
+        self.assertEqual(obs_decoded_enr.shape, (batch_size, features))
+
+        # Test loss functions don't crash
+        loss_bkg_feat = apply_fn(
+            variables, init_key, images, a_mat, method='loss_bkg_obs',
+            train=False
+        )
+        self.assertEqual(loss_bkg_feat.shape, ())
+
+        loss_enr_feat = apply_fn(
+            variables, init_key, images, a_mat, method='loss_enr_obs',
+            train=False
+        )
+        self.assertEqual(loss_enr_feat.shape, ())
+
+        loss_bkg_obs = apply_fn(
+            variables, init_key, images, a_mat, method='loss_bkg_obs',
+            train=False
+        )
+        self.assertEqual(loss_bkg_obs.shape, ())
+
+        loss_enr_obs = apply_fn(
+            variables, init_key, images, a_mat, method='loss_enr_obs',
+            train=False
+        )
+        self.assertEqual(loss_enr_obs.shape, ())
 
 
 if __name__ == '__main__':

@@ -10,8 +10,6 @@ import optuna
 
 from clvm_train import run_clvm
 
-jax.config.update("jax_enable_x64", True)
-
 FLAGS = flags.FLAGS
 
 flags.DEFINE_string('workdir_optuna', None, 'working directory.')

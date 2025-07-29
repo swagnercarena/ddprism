@@ -13,11 +13,11 @@ def get_config():
 
     # Parameters for CLVM trials.
     config.latent_dim_min = 1
-    config.latent_dim_max = 5
+    config.latent_dim_max = 20
 
     # Optimization hyperparameters
     config.lr_min = 1e-5
-    config.lr_max = 1e-3
+    config.lr_max = 1e-2
 
     # wandb parameters
     config.wandb_kwargs = ConfigDict(

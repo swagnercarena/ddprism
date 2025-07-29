@@ -38,6 +38,7 @@ def get_config():
     config.epochs = 16
     config.steps_per_epoch = 1024
     config.batch_size = 1920
+    config.sample_batch_size = 256
 
     # wandb parameters
     config.wandb_kwargs = ConfigDict(

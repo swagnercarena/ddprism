@@ -152,7 +152,9 @@ def get_posterior_samples(
             )
         )
 
-    return jnp.stack(bkg_feat, axis=0), jnp.stack(signal_feat, axis=0)
+    return (
+        jnp.concatenate(bkg_feat, axis=0), jnp.concatenate(signal_feat, axis=0)
+    )
 
 
 def get_prior_samples(rng, state, num_samples, other_vars, batch_size):
@@ -177,7 +179,10 @@ def get_prior_samples(rng, state, num_samples, other_vars, batch_size):
             variables, z_latent, method='decode_bkg_feat', train=False
         ))
 
-    return jnp.stack(bkg_feat, axis=0), jnp.stack(signal_feat, axis=0)
+    return (
+        jnp.concatenate(bkg_feat, axis=0),
+        jnp.concatenate(signal_feat, axis=0)
+    )
 
 
 def run_clvm(config_clvm, workdir):

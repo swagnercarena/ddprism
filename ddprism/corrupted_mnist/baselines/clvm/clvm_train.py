@@ -15,6 +15,7 @@ from tqdm import tqdm
 import wandb
 
 from ddprism import training_utils
+from ddprism.utils import utils
 from ddprism.clvm import clvm_utils, models
 from ddprism.corrupted_mnist import datasets
 from ddprism.metrics import metrics, image_metrics
@@ -286,6 +287,17 @@ def run_clvm(config_clvm, workdir):
         rng_init, rng, dummy_obs, method='loss_enr_feat'
     )
     other_vars = {'log_sigma_obs': jnp.log(config_mnist.sigma_y)}
+
+    # For linear models, we want to initialize the weight matrices and means
+    # using ppca.
+    if config_clvm.model_type == "linear":
+        mnist_mu, mnist_cov = utils.ppca(
+            rng_init, enr_obs, rank=config_clvm.latent_dim_t
+        )
+        variables['params']['w_mat'] = mnist_cov.u_mat
+        variables['params']['s_mat'] *= 0.01
+        variables['params']['mu_signal'] = mnist_mu / 2
+        variables['params']['mu_bkg'] = mnist_mu / 2
 
     # Set up our training state.
     learning_rate_fn = training_utils.get_learning_rate_schedule(

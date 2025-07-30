@@ -15,6 +15,7 @@ from tqdm import tqdm
 import wandb
 
 from ddprism import training_utils
+from ddprism import utils
 from ddprism.clvm import clvm_utils, models
 from ddprism.corrupted_mnist import datasets
 from ddprism.metrics import metrics, image_metrics
@@ -114,7 +115,7 @@ def train_step(state, rng, enr_obs, bkg_obs, enr_a_mat, bkg_a_mat, other_vars):
 
 
 def get_posterior_samples(
-    rng, state, enr_obs_flat, enr_a_mat_flat, other_vars, batch_size
+    rng, state, enr_obs_flat, enr_a_mat_batch, other_vars, batch_size
 ):
     """Get posterior samples from the CLVM model."""
     # Collect the relevant variables.
@@ -124,13 +125,11 @@ def get_posterior_samples(
     enr_obs_flat = rearrange(
         enr_obs_flat, '(K N) ... -> K N ...', N=batch_size
     )
-    enr_a_mat_flat = rearrange(
-        enr_a_mat_flat, '(K N) ... -> K N ...', N=batch_size
-    )
     signal_feat, bkg_feat = [], []
-    for enr_obs, enr_a_mat in zip(enr_obs_flat, enr_a_mat_flat):
+    for enr_obs in enr_obs_flat:
         latents = state.apply_fn(
-            variables, enr_obs, enr_a_mat, method='encode_enr_obs', train=False
+            variables, enr_obs, enr_a_mat_batch, method='encode_enr_obs',
+            train=False
         )
         latent_draw = state.apply_fn(
             variables, rng, latents[0], latents[1], method='_latent_draw',
@@ -210,12 +209,12 @@ def run_clvm(config_clvm, workdir):
         # Get our observations, mixing matrix, and covariance.
         enr_obs, enr_a_mat, _, _ = datasets.get_dataset(
             rng_dataset, 1.0, config_mnist.mnist_amp, config_mnist.sigma_y,
-            config_mnist.downsampling_ratios, config_mnist.sample_batch_size,
+            config_mnist.downsampling_ratios, config_clvm.sample_batch_size,
             imagenet_path, config_mnist.dataset_size
         )
         bkg_obs, bkg_a_mat, _, _ = datasets.get_dataset(
             rng_dataset, 1.0, 0.0, config_mnist.sigma_y,
-            config_mnist.downsampling_ratios, config_mnist.sample_batch_size,
+            config_mnist.downsampling_ratios, config_clvm.sample_batch_size,
             imagenet_path, config_mnist.dataset_size
         )
 

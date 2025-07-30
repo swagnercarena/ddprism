@@ -212,11 +212,13 @@ def run_clvm(config_clvm, workdir):
             config_mnist.downsampling_ratios, config_clvm.sample_batch_size,
             imagenet_path, config_mnist.dataset_size
         )
+        enr_a_mat = enr_a_mat[:, 1]
         bkg_obs, bkg_a_mat, _, _ = datasets.get_dataset(
             rng_dataset, 1.0, 0.0, config_mnist.sigma_y,
             config_mnist.downsampling_ratios, config_clvm.sample_batch_size,
             imagenet_path, config_mnist.dataset_size
         )
+        bkg_a_mat = bkg_a_mat[:, 0]
 
         # Save the observations, A matrix, and covariance.
         np.save(os.path.join(workdir, 'corrupt_obs.npy'), enr_obs)

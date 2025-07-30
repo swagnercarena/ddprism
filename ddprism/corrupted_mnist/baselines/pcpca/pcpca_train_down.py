@@ -213,7 +213,6 @@ def run_pcpca(config_pcpca, workdir):
     # Reshape and unnormalize the posterior samples.
     post_samples = post_samples.reshape(-1, 28, 28, 1)
     post_samples = post_samples * enr_std + enr_mean
-    post_samples /= config_mnist.mnist_amp
 
     # Get prior samples for MNIST digits.
     rng_prior, rng = jax.random.split(rng, 2)
@@ -227,7 +226,6 @@ def run_pcpca(config_pcpca, workdir):
     # Reshape and unnormalize the prior samples.
     prior_samples = prior_samples.reshape(-1, 28, 28, 1)
     prior_samples = prior_samples * enr_std + enr_mean
-    prior_samples /= config_mnist.mnist_amp
 
     # Unormalize and reshape the enriched dataset for plotting.
     y_enr_plot = y_enr_all.reshape(-1, 28, 28, 1)

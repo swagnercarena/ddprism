@@ -39,10 +39,23 @@ def objective(trial, config, workdir):
     # Record metrics in the optuna study.
     workdir = os.path.join(workdir, f'trial_{trial.number}')
     os.makedirs(workdir, exist_ok=True)
-    metrics = run_pcpca(config_pcpca, workdir)
-    trial.set_user_attr("trial_metrics", metrics)
 
-    return metrics['fcd_post']
+    try:
+        metrics = run_pcpca(config_pcpca, workdir)
+        trial.set_user_attr("trial_metrics", metrics)
+        trial.set_user_attr("trial_failed", False)
+        return metrics['fcd_post']
+
+    except Exception as e:
+        # Log the error and return a large penalty value
+        print(f"Trial {trial.number} failed with error: {str(e)}")
+        trial.set_user_attr("trial_failed", True)
+        trial.set_user_attr("trial_error", str(e))
+        trial.set_user_attr("trial_metrics", None)
+
+        # Return a large penalty value (since we're minimizing)
+        # This tells Optuna this parameter combination was very bad
+        return float('inf')
 
 
 def main(_):

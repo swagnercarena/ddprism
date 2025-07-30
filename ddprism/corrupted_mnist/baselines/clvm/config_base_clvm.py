@@ -1,5 +1,5 @@
 """Basic configuration for the cLVM with cVAE setup."""
-from ddprism.corrupted_mnist import config_base_grass, config_base_mnist
+from ddprism.corrupted_mnist import config_base_mnist
 from ml_collections import ConfigDict
 
 def get_config():

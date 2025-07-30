@@ -294,10 +294,13 @@ def run_clvm(config_clvm, workdir):
         mnist_mu, mnist_cov = utils.ppca(
             rng_init, enr_obs, rank=config_clvm.latent_dim_t
         )
-        variables['params']['w_mat'] = mnist_cov.u_mat
-        variables['params']['s_mat'] *= 0.01
-        variables['params']['mu_signal'] = mnist_mu / 2
-        variables['params']['mu_bkg'] = mnist_mu / 2
+        bkg_mu, bkg_cov = utils.ppca(
+            rng_init, bkg_obs, rank=config_clvm.latent_dim_z
+        )
+        variables['params']['w_mat'] = mnist_cov.u_mat / jnp.linalg.vector_norm(mnist_cov.u_mat)[None]
+        variables['params']['s_mat'] = bkg_cov.u_mat / jnp.linalg.vector_norm(bkg_cov.u_mat)[None]
+        variables['params']['mu_signal'] = mnist_mu - bkg_mu
+        variables['params']['mu_bkg'] = bkg_mu
 
     # Set up our training state.
     learning_rate_fn = training_utils.get_learning_rate_schedule(

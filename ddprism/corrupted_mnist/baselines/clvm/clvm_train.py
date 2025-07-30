@@ -15,7 +15,7 @@ from tqdm import tqdm
 import wandb
 
 from ddprism import training_utils
-from ddprism.utils import utils
+from ddprism import utils
 from ddprism.clvm import clvm_utils, models
 from ddprism.corrupted_mnist import datasets
 from ddprism.metrics import metrics, image_metrics

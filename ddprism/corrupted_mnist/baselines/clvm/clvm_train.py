@@ -47,7 +47,7 @@ def get_activation_fn(activation_name: str):
 
 def create_vae_encoders_decoders(config, image_shape):
     """Create VAE encoders and decoders based on config."""
-    activation_fn = clvm_train.get_activation_fn(config.vae.activation)
+    activation_fn = get_activation_fn(config.vae.activation)
 
     # Create signal encoder
     signal_encoder = models.EncoderMLP(

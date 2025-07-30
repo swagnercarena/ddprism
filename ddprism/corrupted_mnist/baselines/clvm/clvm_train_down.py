@@ -349,8 +349,6 @@ def run_clvm(config_clvm, workdir):
             rng_post, state, enr_obs, enr_a_mat, other_vars,
             config_clvm.sample_batch_size
         )
-        # Correct the posterior samples for the A matrix.
-        post_samples /= config_mnist.mnist_amp
 
         # Generate prior samples
         rng, rng_prior = jax.random.split(rng)
@@ -362,8 +360,6 @@ def run_clvm(config_clvm, workdir):
             rng_prior, state, num_samples, other_vars,
             config_clvm.sample_batch_size
         )
-        # Correct the prior samples for the A matrix.
-        prior_samples /= config_mnist.mnist_amp
 
         # Compute and log metrics.
         metrics_dict = {}

@@ -21,6 +21,12 @@ def get_config():
     config.lr_min = 1e-5
     config.lr_max = 1e-3
 
+    # VAE hyperparameters (only used when model_type == "vae")
+    config.vae_hid_features_min = 32
+    config.vae_hid_features_max = 512
+    config.vae_normalize_choices = [True, False]
+    config.vae_activation_choices = ['silu', 'tanh']
+
     # wandb parameters
     config.wandb_kwargs = ConfigDict(
         {

@@ -47,48 +47,42 @@ def get_activation_fn(activation_name: str):
 
 def create_vae_encoders_decoders(config, image_shape):
     """Create VAE encoders and decoders based on config."""
-    activation_fn = get_activation_fn(config.vae.activation)
+    activation_fn = clvm_train.get_activation_fn(config.vae.activation)
 
     # Create signal encoder
-    signal_encoder = models.EncoderFlatUNet(
+    signal_encoder = models.EncoderMLP(
         latent_features=config.latent_dim_t,
-        image_shape=image_shape,
-        hid_channels=config.vae.hid_channels,
-        hid_blocks=config.vae.hid_blocks,
-        heads=config.vae.heads,
+        hid_features=config.vae.hid_features,
         activation=activation_fn,
-        dropout_rate=config.vae.dropout_rate
+        dropout_rate=config.vae.dropout_rate,
+        normalize=config.vae.normalize
     )
 
     # Create background encoder
-    bkg_encoder = models.EncoderFlatUNet(
+    bkg_encoder = models.EncoderMLP(
         latent_features=config.latent_dim_z,
-        image_shape=image_shape,
-        hid_channels=config.vae.hid_channels,
-        hid_blocks=config.vae.hid_blocks,
-        heads=config.vae.heads,
+        hid_features=config.vae.hid_features,
         activation=activation_fn,
-        dropout_rate=config.vae.dropout_rate
+        dropout_rate=config.vae.dropout_rate,
+        normalize=config.vae.normalize
     )
 
     # Create signal decoder
-    signal_decoder = models.DecoderFlatUNet(
-        image_shape=image_shape,
-        hid_channels=config.vae.hid_channels,
-        hid_blocks=config.vae.hid_blocks,
-        heads=config.vae.heads,
+    signal_decoder = models.DecoderMLP(
+        features=image_shape[0] * image_shape[1] * image_shape[2],
+        hid_features=config.vae.hid_features,
         activation=activation_fn,
-        dropout_rate=config.vae.dropout_rate
+        dropout_rate=config.vae.dropout_rate,
+        normalize=config.vae.normalize
     )
 
     # Create background decoder
-    bkg_decoder = models.DecoderFlatUNet(
-        image_shape=image_shape,
-        hid_channels=config.vae.hid_channels,
-        hid_blocks=config.vae.hid_blocks,
-        heads=config.vae.heads,
+    bkg_decoder = models.DecoderMLP(
+        features=image_shape[0] * image_shape[1] * image_shape[2],
+        hid_features=config.vae.hid_features,
         activation=activation_fn,
-        dropout_rate=config.vae.dropout_rate
+        dropout_rate=config.vae.dropout_rate,
+        normalize=config.vae.normalize
     )
 
     return signal_encoder, bkg_encoder, signal_decoder, bkg_decoder

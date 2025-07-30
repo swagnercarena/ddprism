@@ -40,6 +40,24 @@ def objective(trial, config, workdir):
     config_clvm['latent_dim_t'] = latent_dim_t
     config_clvm['lr_init_val'] = lr_init_val
 
+    # VAE hyperparameters (only optimize if model_type is "vae").
+    if config_clvm.model_type == "vae":
+        hid_features_size = trial.suggest_int(
+            "vae_hid_features", config.vae_hid_features_min, config.vae_hid_features_max
+        )
+        normalize = trial.suggest_categorical(
+            "vae_normalize", config.vae_normalize_choices
+        )
+        activation = trial.suggest_categorical(
+            "vae_activation", config.vae_activation_choices
+        )
+
+        # Update VAE config with suggested values
+        # Keep 3-layer architecture but vary the hidden size
+        config_clvm.vae['hid_features'] = (hid_features_size, hid_features_size, hid_features_size)
+        config_clvm.vae['normalize'] = normalize
+        config_clvm.vae['activation'] = activation
+
     # Run CLVM.
     os.makedirs(os.path.join(workdir, f'trial_{trial.number}'), exist_ok=True)
 

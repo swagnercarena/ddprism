@@ -19,9 +19,7 @@ def get_config():
     # VAE model parameters (only used when model_type == "vae")
     config.vae = ConfigDict({
         # Hidden features for encoders/decoders
-        'hid_channels': (32, 64, 128),
-        'hid_blocks': (2, 2, 2),
-        'heads': {'2': 4},
+        'hid_features': (128, 128, 128),
         'activation': 'silu',
         'normalize': True,
         'dropout_rate': 0.1,

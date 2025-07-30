@@ -20,10 +20,10 @@ config_flags.DEFINE_config_file(
 def objective(trial, config, workdir):
     # CLVM hyperparameters.
     latent_dim_z = trial.suggest_int(
-        "latent_dim_z", config.latent_dim_min, config.latent_dim_max
+        "latent_dim_z", config.latent_z_dim_min, config.latent_z_dim_max
     )
     latent_dim_t = trial.suggest_int(
-        "latent_dim_t", config.latent_dim_min, config.latent_dim_max
+        "latent_dim_t", config.latent_t_dim_min, config.latent_t_dim_max
     )
 
     # Optimization hyperparameters.

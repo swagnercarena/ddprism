@@ -156,6 +156,12 @@ def get_dataloader(
                 else:
                     mapping = '(M N) H W -> 1 M N H W 1'
                 len_batch = (len(batch['image_flux']) // pmap_dim) * pmap_dim
+
+                if len_batch == 0:
+                    # Couldn't fit the last batch, so we're done.
+                    continue_loop = False
+                    continue
+
                 obs = rearrange(
                     batch['image_flux'][:len_batch], mapping, M=pmap_dim
                 )

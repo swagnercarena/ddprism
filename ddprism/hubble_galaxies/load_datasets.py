@@ -71,8 +71,8 @@ def get_dataloader(
     rng: Sequence[int], dset_name: str, dataset_size: int,
     sample_batch_size: int, pmap_dim: int, norm: Optional[float] = 1.0,
     arcsinh_scaling: Optional[float] = 1.0, data_max: Optional[float] = jnp.inf,
-    flatten=True,  n_models: int=1, train: bool=True
-) -> Generator[np.ndarray, Sequence[linalg.DPLR], np.ndarray]:
+    flatten=True, n_models: int=1, train: bool=True
+) -> Generator[tuple[jnp.ndarray, list[linalg.DPLR], jnp.ndarray], None, None]:
     """Get iterator for loading observations and covariance.
 
     Args:
@@ -89,6 +89,13 @@ def get_dataloader(
         train: Whether the dataset will be used for training, which triggers
             infinite iteration over the dataset and shuffling.
 
+    Returns:
+        Generator that yields tuples of (obs, cov_y, A_mat). If train is True,
+        the generator will be infinite, will shuffle the dataset, and will have
+        a batch dimension. Each yield will return a total of dataset_size
+        images. If train is False, the batch dimension will be size 1, and
+        iterating through the generator will return the full dataset.
+
     Notes:
         Possible dataset names are defined in hst_cosmos.py
     """
@@ -100,7 +107,7 @@ def get_dataloader(
     ).with_format('numpy')
 
     # Check that the reshapes will work.
-    assert not train or (dataset_size & (sample_batch_size * pmap_dim) == 0)
+    assert not train or (dataset_size % (sample_batch_size * pmap_dim) == 0)
     dataset_size = dataset_size if dataset_size > 0 else len(dset)
 
     # Infinite loop on dataset.
@@ -117,11 +124,11 @@ def get_dataloader(
         # Our concept of a batch changes depending on whether we are training.
         if train:
             dset = dset.iter(
-                batch_size=dataset_size, drop_last_batch=False
+                batch_size=dataset_size, drop_last_batch=True
             )
         else:
             dset = dset.iter(
-                batch_size=pmap_dim * sample_batch_size, drop_last_batch=True
+                batch_size=pmap_dim * sample_batch_size, drop_last_batch=False
             )
 
         for batch in dset:

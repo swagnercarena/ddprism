@@ -36,6 +36,7 @@ flags.DEFINE_integer(
     'randoms_lap', -1, 'Checkpoint number for randoms model (-1 for latest).'
 )
 
+
 def append_to_hdf5(filepath, x_randoms, x_galaxies):
     """Append samples to HDF5 file, creating datasets if they don't exist."""
     if not os.path.exists(filepath):
@@ -66,7 +67,8 @@ def append_to_hdf5(filepath, x_randoms, x_galaxies):
             current_size = galaxies_dset.shape[0]
             new_size = current_size + x_galaxies.shape[0]
             galaxies_dset.resize(new_size, axis=0)
-            galaxies_dset[current_size:] = x_galaxies 
+            galaxies_dset[current_size:] = x_galaxies
+
 
 def main(_):
     """Generate samples for the full galaxy dataset."""

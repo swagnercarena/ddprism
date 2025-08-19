@@ -72,15 +72,12 @@ def append_to_hdf5(filepath, x_randoms, x_galaxies):
 
 def main(_):
     """Generate samples for the full galaxy dataset."""
-    config = FLAGS.config
     galaxies_workdir = FLAGS.galaxies_workdir
     randoms_workdir = FLAGS.randoms_workdir
     output_dir = FLAGS.output_dir
 
     # Create output directory
     os.makedirs(output_dir, exist_ok=True)
-
-    rng = jax.random.PRNGKey(config.rng_key)
 
     print(f'Found devices {jax.local_devices()}')
     print(f'Galaxies workdir: {galaxies_workdir}')
@@ -120,6 +117,7 @@ def main(_):
     galaxies_checkpoint_manager.close()
 
     # Set up dataset
+    rng = jax.random.PRNGKey(config.rng_key)
     rng_dataset, rng = jax.random.split(rng, 2)
     image_shape = (NUMPIX, NUMPIX, 1)
 

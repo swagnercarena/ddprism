@@ -10,6 +10,9 @@ def get_config():
     config.rng_key = 3
     config.rng_key_val = 4
 
+    # Posterior parameters.
+    config.post_regularization=0.0 
+
     # Parameters for dataset generation
     config.dataset_size = 13_824
     config.mnist_amp = 0.5

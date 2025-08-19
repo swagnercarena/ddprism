@@ -129,7 +129,7 @@ def main(_):
         rng_dataset, dset_name, -1, config.sample_batch_size,
         jax.local_device_count(), norm=config.data_norm,
         arcsinh_scaling=config.arcsinh_scaling, data_max=config.data_max,
-        flatten=True
+        flatten=True, train=False
     )
 
     # Create posterior denoiser
@@ -180,8 +180,11 @@ def main(_):
         rng_samp = jax.random.split(
             rng_samp, (jax.device_count(),)
         )
+        # All the batches have a superflous batch dimension, so we need to
+        # remove it.
         x_sample = sample_pmap(
-            gal_batch, rng_samp, post_state_unet, params, A_batch, cov_y
+            gal_batch[0], rng_samp, post_state_unet, params, A_batch[0],
+            cov_y[0]
         )
         x_sample = jnp.split(x_sample, 2, axis=-1)
         x_randoms = rearrange(

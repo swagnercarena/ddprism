@@ -1,14 +1,9 @@
-chex
-einops
-flax
-jax # jax[cuda12-local]==0.5.3
+chex>=0.1.89
+einops>=0.8.1
+flax>=0.10.6
+jax>=0.5.3
 ml_collections
 numpy
-optax
+optax>=0.2.4
 orbax
-orbax-checkpoint
-POT
-seaborn
-tqdm
-wandb
-
+orbax-checkpoint>=0.11.13

@@ -1,0 +1,8 @@
+POT>=0.9.5
+seaborn
+tqdm
+wandb
+h5py
+kymatio>=0.3.0
+absl
+datasets

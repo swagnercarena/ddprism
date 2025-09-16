@@ -33,11 +33,11 @@ def get_config():
     config.post_use_dplr = True
     config.post_safe_divide = 1e-3
     config.post_regularization = 1e-3
-    config.post_error_threshold = 1e-1
+    config.post_error_threshold = 1e-4
 
     # Training parameters.
     config.lr_init_val = 1e-4
-    config.lr_end_val = 1e-6
+    config.lr_end_val = 1e-5
     config.epochs = 32768
     config.batch_size = 1024
     config.gaussian_em_laps = 8192

@@ -38,7 +38,7 @@ def get_config():
     config.use_dynamic = False
     config.em_laps = 32
     config.gaussian_em_laps = 4
-    config.batch_size = 32
+    config.batch_size = 64
     config.ema_decay = 0.995
     config.grad_clip_norm = 1.0
     config.optimizer = ConfigDict({

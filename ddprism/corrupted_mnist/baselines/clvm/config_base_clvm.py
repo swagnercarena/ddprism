@@ -13,8 +13,8 @@ def get_config():
     config.model_type = "linear"
 
     # Linear model parameters
-    config.latent_dim_z = 5
-    config.latent_dim_t = 5
+    config.latent_dim_z = 380
+    config.latent_dim_t = 15
 
     # VAE model parameters (only used when model_type == "vae")
     config.vae = ConfigDict({
@@ -26,7 +26,7 @@ def get_config():
     })
 
     # Training parameters.
-    config.lr_init_val = 1e-4
+    config.lr_init_val = 1e-5
     config.lr_schedule = ConfigDict({
         'type': 'cosine',
         'warmup_steps': 0,

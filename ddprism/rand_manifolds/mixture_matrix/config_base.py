@@ -41,7 +41,7 @@ def get_config():
     config.epochs = 32768
     config.batch_size = 1024
     config.gaussian_em_laps = 8192
-    config.diffusion_em_laps = 128
+    config.diffusion_em_laps = 70
 
     # Sampling arguments
     config.sampling_kwargs = ConfigDict(

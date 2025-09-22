@@ -9,7 +9,7 @@ def get_config():
 
     # Training parameters.
     config.gaussian_em_laps = 16
-    config.diffusion_em_laps = 128
+    config.diffusion_em_laps = 13
 
     # Sampling arguments. Default is to have the number of model evaluations
     # per sampling be 8x for gibbs versus joint

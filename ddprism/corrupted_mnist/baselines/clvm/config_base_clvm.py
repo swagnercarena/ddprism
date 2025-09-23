@@ -23,8 +23,8 @@ def get_config():
         'decoder_architecture': 'mlp',
 
         # MLP-specific parameters (used when architecture is 'mlp')
-        'hid_features': (128, 128, 128), # Hidden features for MLP.
-        'normalize': True,                # Normalization for MLP.
+        'hid_features': (70, 70, 70), # Hidden features for MLP.
+        'normalize': False,                # Normalization for MLP.
 
         # UNET-specific parameters (used when architecture is 'unet')
         'hid_channels': [32, 64, 128], # Number of channels per level
@@ -37,7 +37,7 @@ def get_config():
     })
 
     # Training parameters.
-    config.lr_init_val = 1.2e-5
+    config.lr_init_val = 2e-4
     config.lr_schedule = ConfigDict({
         'type': 'cosine',
         'warmup_steps': 0,
@@ -45,7 +45,7 @@ def get_config():
     })
     config.epochs = 16
     config.steps_per_epoch = 1024
-    config.batch_size = 1920
+    config.batch_size = 256
     config.sample_batch_size = 256
 
     # wandb parameters

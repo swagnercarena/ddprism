@@ -6,11 +6,8 @@ def get_config():
     """Get the default hyperparameter configuration."""
     config = config_vae_clvm.get_config()
 
-    config.vae = ConfigDict({
-        # UNET-specific parameters (used when architecture is 'unet')
-        'hid_channels': [32], # Number of channels per level
-        'hid_blocks': [2], # Number of blocks per level
-        'heads': None,
-    })
+    config.vae['hidden_channels'] = [32]
+    config.vae['hidden_blocks'] = [2]
+    config.vae['heads'] = None
 
     return config

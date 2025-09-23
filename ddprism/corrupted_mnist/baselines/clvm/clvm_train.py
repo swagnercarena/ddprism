@@ -291,8 +291,12 @@ def run_clvm(config_clvm, workdir):
         bkg_mu, bkg_cov = utils.ppca(
             rng_init, bkg_obs, rank=config_clvm.latent_dim_z
         )
-        variables['params']['w_mat'] = mnist_cov.u_mat / jnp.linalg.vector_norm(mnist_cov.u_mat)[None]
-        variables['params']['s_mat'] = bkg_cov.u_mat / jnp.linalg.vector_norm(bkg_cov.u_mat)[None]
+        variables['params']['w_mat'] = (
+            mnist_cov.u_mat / jnp.linalg.vector_norm(mnist_cov.u_mat)[None]
+        )
+        variables['params']['s_mat'] = (
+            bkg_cov.u_mat / jnp.linalg.vector_norm(bkg_cov.u_mat)[None]
+        )
         variables['params']['mu_signal'] = mnist_mu - bkg_mu
         variables['params']['mu_bkg'] = bkg_mu
 

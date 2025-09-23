@@ -26,7 +26,7 @@ def get_config():
     })
 
     # Training parameters.
-    config.lr_init_val = 1e-5
+    config.lr_init_val = 1.2e-5
     config.lr_schedule = ConfigDict({
         'type': 'cosine',
         'warmup_steps': 0,

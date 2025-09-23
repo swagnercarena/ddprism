@@ -13,8 +13,8 @@ def get_config():
     config.model_type = "linear"
 
     # Linear model parameters
-    config.latent_dim_z = 380
-    config.latent_dim_t = 15
+    config.latent_dim_z = 265
+    config.latent_dim_t = 6
 
     # VAE model parameters (only used when model_type == "vae")
     config.vae = ConfigDict({
@@ -37,7 +37,7 @@ def get_config():
     })
 
     # Training parameters.
-    config.lr_init_val = 2e-4
+    config.lr_init_val = 1.2e-5
     config.lr_schedule = ConfigDict({
         'type': 'cosine',
         'warmup_steps': 0,
@@ -45,12 +45,12 @@ def get_config():
     })
     config.epochs = 16
     config.steps_per_epoch = 1024
-    config.batch_size = 256
+    config.batch_size = 1920
     config.sample_batch_size = 256
 
     # wandb parameters
     config.wandb_kwargs = ConfigDict(
-        {'project': 'cvlm_linear_mnist_cont', 'mode': 'online', 'run_name': None}
+        {'project': 'clvm_linear_mnist_cont', 'mode': 'online', 'run_name': None}
     )
 
     return config

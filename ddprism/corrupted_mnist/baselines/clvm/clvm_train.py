@@ -49,43 +49,79 @@ def create_vae_encoders_decoders(config, image_shape):
     """Create VAE encoders and decoders based on config."""
     activation_fn = get_activation_fn(config.vae.activation)
 
-    # Create signal encoder
-    signal_encoder = models.EncoderMLP(
-        latent_features=config.latent_dim_t,
-        hid_features=config.vae.hid_features,
-        activation=activation_fn,
-        dropout_rate=config.vae.dropout_rate,
-        normalize=config.vae.normalize
+    # Get encoder and decoder architectures (default to 'mlp' for backward
+    # compatibility)
+    encoder_arch = config.vae.get('encoder_architecture', 'mlp')
+    decoder_arch = config.vae.get('decoder_architecture', 'mlp')
+
+    # Create encoders
+    signal_encoder = create_encoder(
+        encoder_arch, config, image_shape, activation_fn, config.latent_dim_t
+    )
+    bkg_encoder = create_encoder(
+        encoder_arch, config, image_shape, activation_fn, config.latent_dim_z
     )
 
-    # Create background encoder
-    bkg_encoder = models.EncoderMLP(
-        latent_features=config.latent_dim_z,
-        hid_features=config.vae.hid_features,
-        activation=activation_fn,
-        dropout_rate=config.vae.dropout_rate,
-        normalize=config.vae.normalize
+    # Create decoders
+    signal_decoder = create_decoder(
+        decoder_arch, config, image_shape, activation_fn
     )
-
-    # Create signal decoder
-    signal_decoder = models.DecoderMLP(
-        features=image_shape[0] * image_shape[1] * image_shape[2],
-        hid_features=config.vae.hid_features,
-        activation=activation_fn,
-        dropout_rate=config.vae.dropout_rate,
-        normalize=config.vae.normalize
-    )
-
-    # Create background decoder
-    bkg_decoder = models.DecoderMLP(
-        features=image_shape[0] * image_shape[1] * image_shape[2],
-        hid_features=config.vae.hid_features,
-        activation=activation_fn,
-        dropout_rate=config.vae.dropout_rate,
-        normalize=config.vae.normalize
+    bkg_decoder = create_decoder(
+        decoder_arch, config, image_shape, activation_fn
     )
 
     return signal_encoder, bkg_encoder, signal_decoder, bkg_decoder
+
+
+def create_encoder(
+    architecture, config, image_shape, activation_fn, latent_features
+):
+    """Create an encoder based on architecture type."""
+    if architecture == 'unet':
+        return models.EncoderFlatUNet(
+            latent_features=latent_features,
+            image_shape=image_shape,
+            hid_channels=config.vae.get('hid_channels', [32, 64, 128]),
+            hid_blocks=config.vae.get('hid_blocks', [2, 2, 2]),
+            heads=config.vae.get('heads', None),
+            dropout_rate=config.vae.dropout_rate,
+            activation=activation_fn
+        )
+    elif architecture == 'mlp':
+        return models.EncoderMLP(
+            latent_features=latent_features,
+            hid_features=config.vae.get(
+                'hid_features', (128, 128, 128)
+            ),
+            activation=activation_fn,
+            dropout_rate=config.vae.dropout_rate,
+            normalize=config.vae.get('normalize', True)
+        )
+    else:
+        raise ValueError(f"Unknown encoder architecture: {architecture}")
+
+
+def create_decoder(architecture, config, image_shape, activation_fn):
+    """Create a decoder based on architecture type."""
+    if architecture == 'unet':
+        return models.DecoderFlatUNet(
+            image_shape=image_shape,
+            hid_channels=config.vae.get('hid_channels', [32, 64, 128]),
+            hid_blocks=config.vae.get('hid_blocks', [2, 2, 2]),
+            heads=config.vae.get('heads', None),
+            dropout_rate=config.vae.dropout_rate,
+            activation=activation_fn
+        )
+    elif architecture == 'mlp':
+        return models.DecoderMLP(
+            features=image_shape[0] * image_shape[1] * image_shape[2],
+            hid_features=config.vae.get('hid_features', (128, 128, 128)),
+            activation=activation_fn,
+            dropout_rate=config.vae.dropout_rate,
+            normalize=config.vae.get('normalize', True)
+        )
+    else:
+        raise ValueError(f"Unknown decoder architecture: {architecture}")
 
 
 @jax.jit

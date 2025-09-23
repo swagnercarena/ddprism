@@ -43,7 +43,8 @@ def objective(trial, config, workdir):
     # VAE hyperparameters (only optimize if model_type is "vae").
     if config_clvm.model_type == "vae":
         hid_features_size = trial.suggest_int(
-            "vae_hid_features", config.vae_hid_features_min, config.vae_hid_features_max
+            "vae_hid_features", config.vae_hid_features_min,
+            config.vae_hid_features_max
         )
         normalize = trial.suggest_categorical(
             "vae_normalize", config.vae_normalize_choices
@@ -54,7 +55,9 @@ def objective(trial, config, workdir):
 
         # Update VAE config with suggested values
         # Keep 3-layer architecture but vary the hidden size
-        config_clvm.vae['hid_features'] = (hid_features_size, hid_features_size, hid_features_size)
+        config_clvm.vae['hid_features'] = (
+            hid_features_size, hid_features_size, hid_features_size
+        )
         config_clvm.vae['normalize'] = normalize
         config_clvm.vae['activation'] = activation
 

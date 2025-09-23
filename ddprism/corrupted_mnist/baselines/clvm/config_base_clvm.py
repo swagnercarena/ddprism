@@ -18,10 +18,21 @@ def get_config():
 
     # VAE model parameters (only used when model_type == "vae")
     config.vae = ConfigDict({
-        # Hidden features for encoders/decoders
-        'hid_features': (128, 128, 128),
+        # Architecture types - can be 'mlp' or 'unet' (defaults to 'mlp')
+        'encoder_architecture': 'mlp',
+        'decoder_architecture': 'mlp',
+
+        # MLP-specific parameters (used when architecture is 'mlp')
+        'hid_features': (128, 128, 128), # Hidden features for MLP.
+        'normalize': True,                # Normalization for MLP.
+
+        # UNET-specific parameters (used when architecture is 'unet')
+        'hid_channels': [32, 64, 128], # Number of channels per level
+        'hid_blocks': [2, 2, 2], # Number of blocks per level
+        'heads': {'1': 2, '2': 4}, # Attention heads for levels 1 and 2
+
+        # Common parameters
         'activation': 'silu',
-        'normalize': True,
         'dropout_rate': 0.1,
     })
 

@@ -106,7 +106,7 @@ class TimeMLPTests(chex.TestCase):
         # Check the weight shapes to confirm the normalization.
         self.assertTupleEqual(
             params_concat['params']['Dense_0']['kernel'].shape,
-            (features, hid_features[0])
+            (features + time_features, hid_features[0])
         )
         self.assertTupleEqual(
             params_concat['params']['Dense_1']['kernel'].shape,

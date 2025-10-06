@@ -6,7 +6,6 @@ from datasets import load_dataset
 from einops import rearrange
 import jax
 import jax.numpy as jnp
-import numpy as np
 
 from ddprism import linalg
 
@@ -127,8 +126,9 @@ def get_dataloader(
                 batch_size=dataset_size, drop_last_batch=True
             )
         else:
+            # TODO: Will have to incoporate paddings to not drop last batch.
             dset = dset.iter(
-                batch_size=pmap_dim * sample_batch_size, drop_last_batch=False
+                batch_size=pmap_dim * sample_batch_size, drop_last_batch=True
             )
 
         for batch in dset:

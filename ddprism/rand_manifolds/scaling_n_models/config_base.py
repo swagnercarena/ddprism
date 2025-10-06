@@ -19,34 +19,34 @@ def get_config():
     config.sigma_y = 0.01
 
     # Parameters for the Denoisers.
-    config.sde = ConfigDict({'a': 5e-3, 'b': 1.5e1})
+    config.sde = ConfigDict({'a': 1e-3, 'b': 1e1})
     config.hidden_features = (256, 256, 256)
     config.time_mlp_normalize = True
-    config.time_conditioning = 'film'
-    config.dropout_rate = 0.1
-    config.emb_features = 128
+    config.time_conditioning = 'concat'
+    config.dropout_rate = 0.0
+    config.emb_features = 64
 
     # Posterior parameters.
     config.post_rtol = 1e-6
     config.post_maxiter = 1
     config.post_use_dplr = True
-    config.post_safe_divide = 1e-3
-    config.post_regularization = 1e-3
-    config.post_error_threshold = 1e-1
+    config.post_safe_divide = 0.0
+    config.post_regularization = 0.0
+    config.post_error_threshold = 0.0
 
     # Training parameters.
-    config.lr_init_val = 1e-4
+    config.lr_init_val = 1e-3
     config.lr_end_val = 1e-6
-    config.epochs = 32768
+    config.epochs = 65_536
     config.batch_size = 1024
-    config.gaussian_em_laps = 32
-    config.diffusion_em_laps = [16, 96, 192]
+    config.gaussian_em_laps = 16
+    config.diffusion_em_laps = [16, 32, 64]
     config.gaussian_dplr_rank = 2
 
     # Sampling arguments
     config.sampling_kwargs = ConfigDict(
         {
-            'steps': 16384, 'sampler': 'pc', 'corrections': 1, 'tau': 8e-2,
+            'steps': 16384, 'sampler': 'pc', 'corrections': 1, 'tau': 1e-1,
             'clip_method': 'none'
         }
     )

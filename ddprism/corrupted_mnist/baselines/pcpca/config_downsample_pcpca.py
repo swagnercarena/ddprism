@@ -13,8 +13,8 @@ def get_config():
     config.config_mnist = config_downsample_mnist.get_config()
 
     # PCPCA parameters
-    config.gamma = 0.01
-    config.latent_dim = 8
+    config.gamma = 0.39
+    config.latent_dim = 5
 
     # Wandb parameters
     config.wandb_kwargs = ConfigDict(

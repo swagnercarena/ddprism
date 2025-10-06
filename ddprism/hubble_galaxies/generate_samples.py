@@ -28,6 +28,9 @@ flags.DEFINE_string(
 flags.DEFINE_string(
     'randoms_workdir', None, 'Working directory with trained randoms model.'
 )
+flags.DEFINE_string(
+    'cosmos_file', None, 'Path to COSMOS dataset to build at end. Optional.'
+)
 flags.DEFINE_string('output_dir', None, 'Directory to save generated samples.')
 flags.DEFINE_integer(
     'galaxies_lap', -1, 'Checkpoint number for galaxies model (-1 for latest).'
@@ -212,9 +215,29 @@ def main(_):
     with open(os.path.join(output_dir, 'metadata.pkl'), 'wb') as f:
         pickle.dump(metadata, f)
 
-    print(f'Final results saved:')
+    print('Final results saved:')
     print(f'  Total samples: {total_samples}')
     print(f'  Output directory: {output_dir}')
+
+    if FLAGS.cosmos_file is not None:
+        samples = h5py.File(samples_savepath, 'r')
+        with h5py.File(FLAGS.cosmos_file, 'w') as f:
+            unormed_galaxies = load_datasets.unnormalize_dataset(
+                    samples['galaxies'][:], config.arcsinh_scaling, config.data_norm
+            )
+            f.create_dataset(
+                'images', data=unormed_galaxies,
+                maxshape=(None, *unormed_galaxies.shape[1:]),
+                chunks=True, compression='gzip'
+            )
+            f.create_dataset(
+                'redshifts', data=jnp.ones(unormed_galaxies.shape[:1]) * 0.3,
+                maxshape=(None,), chunks=True, compression='gzip'
+            )
+            f.create_dataset(
+                'pixel_sizes', data=jnp.ones(unormed_galaxies.shape[:1]) * 0.05,
+                maxshape=(None,), chunks=True, compression='gzip'
+            )
 
 
 if __name__ == '__main__':

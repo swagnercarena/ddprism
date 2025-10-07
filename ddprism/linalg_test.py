@@ -64,7 +64,10 @@ class DPLRTests(chex.TestCase):
 
         # Test that matrix scaled correctly.
         full_matrix = dplr_instance.full_matrix()
-        assert jnp.allclose(full_matrix * vec[..., None], result.full_matrix(), atol=1e-03, rtol=1e-03)
+        assert jnp.allclose(
+            full_matrix * vec[..., None], result.full_matrix(),
+            atol=1e-3, rtol=1e-3
+        )
 
     @chex.all_variants(without_device=False)
     def test_matmul(self):
@@ -82,7 +85,7 @@ class DPLRTests(chex.TestCase):
 
         result = matmul(dplr_instance, mat)
         full_matrix = dplr_instance.full_matrix()
-        assert jnp.allclose(result, full_matrix @ mat, atol=1e-03, rtol=1e-02)
+        assert jnp.allclose(result, full_matrix @ mat, atol=1e-3, rtol=1e-3)
 
         # Test __rmatmul__
         mat = jnp.swapaxes(mat, -1, -2)
@@ -90,7 +93,7 @@ class DPLRTests(chex.TestCase):
             return v @ u
         matmul = self.variant(_rmatmul)
         result = matmul(mat, dplr_instance)
-        assert jnp.allclose(result, mat @ full_matrix, atol=1e-03, rtol=1e-02)
+        assert jnp.allclose(result, mat @ full_matrix, atol=1e-3, rtol=1e-3)
 
     def test_rank(self):
         """Test the rank of the matrix."""

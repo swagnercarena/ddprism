@@ -9,7 +9,7 @@ from flax import linen as nn
 from ddprism.embedding_models import AdaLNZeroModulation
 
 
-PERIOD = 1e4
+PERIOD = 1e-1
 
 
 class RelativeBias(nn.Module):
@@ -30,11 +30,11 @@ class RelativeBias(nn.Module):
         """
         # Get the angular distance between all pairs of vectors.
         dot = jnp.einsum('...NK,...MK->...NM', vec_map, vec_map)
-        angle = jnp.arccos(dot)
+        angle = jnp.arccos(jnp.clip(dot,0.0,1.0)) / 1e-3
 
         # Get the embedded distance between all pairs of vectors.
         freqs = jnp.linspace(0, 1, self.freq_features // 2)
-        freqs = jnp.asarray((1 / PERIOD) ** freqs)
+        freqs = jnp.asarray((1 / PERIOD) * freqs)
         pos = jnp.concatenate(
             (
                 jnp.sin(freqs * angle[..., None]),

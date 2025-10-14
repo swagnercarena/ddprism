@@ -7,7 +7,7 @@ import healpy as hp
 import jax
 import jax.numpy as jnp
 
-from ddprism.tsz_cmb import embedding_models
+from ddprism.tsz_cmb import embedding_models_healpix
 
 
 class RelativeBiasTests(chex.TestCase):
@@ -32,7 +32,7 @@ class RelativeBiasTests(chex.TestCase):
         vec_map = vec_map / jnp.linalg.norm(vec_map, axis=-1, keepdims=True)
 
         # Initialize RelativeBias
-        relative_bias = embedding_models.RelativeBias(
+        relative_bias = embedding_models_healpix.RelativeBias(
             n_heads=n_heads, freq_features=freq_features
         )
         params = relative_bias.init(rng, vec_map)
@@ -74,7 +74,7 @@ class HEALPixAttentionTests(chex.TestCase):
         x = jax.random.normal(rng, (batch_size, n_pixels, emb_dim))
 
         # Initialize HEALPixAttention
-        attention = embedding_models.HEALPixAttention(
+        attention = embedding_models_healpix.HEALPixAttention(
             emb_dim=emb_dim, n_heads=n_heads, dropout_rate=dropout_rate,
             use_bias=use_bias
         )
@@ -121,7 +121,7 @@ class HEALPixAttentionBlockTests(chex.TestCase):
         t = jax.random.normal(rng, (batch_size, time_emb_dim))
 
         # Initialize HEALPixAttentionBlock
-        attention_block = embedding_models.HEALPixAttentionBlock(
+        attention_block = embedding_models_healpix.HEALPixAttentionBlock(
             emb_dim=emb_dim,
             n_heads=n_heads,
             time_emb_dim=time_emb_dim,
@@ -174,7 +174,7 @@ class HEALPixTransformerTests(chex.TestCase):
         t = jax.random.normal(rng, (batch_size, time_emb_dim))
 
         # Initialize HEALPixTransformer
-        transformer = embedding_models.HEALPixTransformer(
+        transformer = embedding_models_healpix.HEALPixTransformer(
             emb_dim=emb_dim,
             n_blocks=n_blocks,
             dropout_rate_block=dropout_rate_block,
@@ -234,7 +234,7 @@ class FlatHEALPixTransformerTest(chex.TestCase):
         healpix_shape = x.shape[-2:]
 
         # Initialize HEALPixTransformer
-        transformer = embedding_models.FlatHEALPixTransformer(
+        transformer = embedding_models_healpix.FlatHEALPixTransformer(
             emb_dim=emb_dim,
             n_blocks=n_blocks,
             dropout_rate_block=dropout_rate_block,

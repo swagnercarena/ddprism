@@ -239,8 +239,6 @@ def process_patch(nside, pos, Npix, nest=False):
 
 #######################
 
-import time
-
 def main(halo_pos, halo_mass, outdir="./patches_out", dataset_name="blah", random_pos=False, noise=0):
     comm = MPI.COMM_WORLD
     rank, size = comm.rank, comm.size
@@ -250,21 +248,19 @@ def main(halo_pos, halo_mass, outdir="./patches_out", dataset_name="blah", rando
     
     # load maps
     f_map = mother + f'final/{profile_str}/{dataset_name}_s{seed}_f%s.fits'
-    t0 = time.time()
+    
     maps = np.empty((len(freqs), hp.nside2npix(nside)), dtype=np.float32)   # store all maps in memory for easy reading out later
     for i, f in enumerate(freqs):
         np.random.seed(42 + f)   # different seed per freq
         maps[i] = hp.read_map(f_map % f, dtype=np.float32, memmap=False) + np.random.normal(scale=noise, size=hp.nside2npix(nside))
-    print('0',time.time()-t0,flush=1)
+
     assert(nside == hp.get_nside(maps[0]))
 
     # Split work (round-robin so all ranks get similar count)
-    t0 = time.time()
     N = len(halo_pos)
     idx_all = np.arange(N)
     idx_my  = np.array_split(idx_all, size)[rank]   # rank 0 gets [0:...], rank 1 gets next, etc.
     N_local = idx_my.size
-    print('1',time.time()-t0,flush=1)
 
     # Early exit if nothing to do
     if N_local == 0:
@@ -279,17 +275,13 @@ def main(halo_pos, halo_mass, outdir="./patches_out", dataset_name="blah", rando
         out_ids = np.empty((N_local,), dtype=np.int32)
         
     for j, i in enumerate(idx_my):
-        t0 = time.time()
         picked = process_patch(nside, halo_pos[i], Npix, nest=False)
-        print('2',time.time()-t0,flush=1)
     
-        t0 = time.time()
         # we want to match sorted(picked) to sorted(parallel) and then order according to nexted ordering (matches what happens in reorder_diamond())
         parallel = hp.nest2ring(nside, np.arange(len(picked)))
         swap = hp.ring2nest(nside, np.sort(parallel))   # this is the nest id in the mapped space of each pixel in np.sort(picked)
         asort = np.argsort(swap)
         pixs = np.sort(picked)[asort]
-        print('3',time.time()-t0,flush=1)
         
         vals = np.empty((len(pixs), len(freqs)), dtype=np.float32)
         vecs = hp.pix2vec(nside, pixs)
@@ -372,9 +364,9 @@ if __name__ == "__main__":
     halo_id = np.arange(len(halo_mass))
 
     # FIXME remove just debugging
-    halo_pos = halo_pos[:100]
-    halo_mass = halo_mass[:100]
-    halo_id = halo_id[:100]
+    # halo_pos = halo_pos[:100]
+    # halo_mass = halo_mass[:100]
+    # halo_id = halo_id[:100]
     
     if random_pos:
         # assign completely random (isotropic) positions of correct shape

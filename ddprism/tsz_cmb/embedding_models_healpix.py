@@ -116,12 +116,28 @@ class HEALPixAttention(nn.Module):
         Returns:
             Output with shape (*, N, D).
         """
+        # Basic shape checks
+        assert x.ndim >= 3, (
+            f"HEALPixAttention expects (..., N, D), got {x.shape}"
+        )
         head_dim = self.emb_features // self.n_heads
         assert head_dim * self.n_heads == self.emb_features
 
         # Multihead attention.
         batch_dim = x.shape[:-2]
         N = x.shape[-2]
+        # relative bias must match (..., N, N, H)
+        assert relative_bias_logits.shape[-1] == self.n_heads, (
+            f"relative_bias_logits heads mismatch: {relative_bias_logits.shape}"
+            f" vs n_heads={self.n_heads}"
+        )
+        assert (
+            relative_bias_logits.shape[-3] == N and
+            relative_bias_logits.shape[-2] == N
+        ), (
+            f"relative_bias_logits must be (..., N, N, H) with N={N}, got "
+            f"{relative_bias_logits.shape}"
+        )
         qkv = nn.Dense(3 * self.emb_features)(x)
         qkv = qkv.reshape(*batch_dim, N, self.n_heads, 3, head_dim)
         q, k, v = jnp.split(qkv, 3, axis=-2)
@@ -179,6 +195,20 @@ class HEALPixAttentionBlock(nn.Module):
         Returns:
             Output with shape (*, N, D).
         """
+        # Shape checks
+        assert x.ndim >= 3, (
+            f"HEALPixAttentionBlock expects (..., N, D), got {x.shape}"
+        )
+        assert t.ndim >= 2 and t.shape[-1] == self.time_emb_features, (
+            f"t must have last dim {self.time_emb_features}, got {t.shape}"
+        )
+        assert relative_bias_logits.ndim >= 4 and (
+            relative_bias_logits.shape[-1] == self.n_heads
+        ), (
+            f"relative_bias_logits must end with n_heads={self.n_heads},"
+            f" got {relative_bias_logits.shape}"
+        )
+
         # Perform adaLN-Zero modulation to condition on t.
         gamma_one, beta_one, alpha_one = (
             AdaLNZeroModulation(self.emb_features, self.time_emb_features)(t)
@@ -252,6 +282,27 @@ class HEALPixTransformer(nn.Module):
         Returns:
             Output with shape (*, N, C).
         """
+        # Basic input shape checks
+        assert x.ndim >= 3, (
+            f"HEALPixTransformer expects x with shape (..., N, C), got "
+            f"{x.shape}"
+        )
+        assert vec_map.ndim >= 3, (
+            f"HEALPixTransformer expects vec_map with shape (..., N, 3), got "
+            f"{vec_map.shape}"
+        )
+        assert vec_map.shape[:-1] == x.shape[:-1], (
+            f"vec_map batch dims {vec_map.shape[:-1]} must match x batch dims "
+            f"{x.shape[:-1]}"
+        )
+        assert vec_map.shape[-1] == 3, (
+            f"vec_map last dim must be 3, got {vec_map.shape}"
+        )
+        assert vec_map.shape[-2] == x.shape[-2], (
+            f"N mismatch between x and vec_map: {x.shape[-2]} vs "
+            f"{vec_map.shape[-2]}"
+        )
+
         # Start by patchifying the input map.
         batch_dim = x.shape[:-2]
         N, C = x.shape[-2:]
@@ -278,7 +329,13 @@ class HEALPixTransformer(nn.Module):
             nn.initializers.normal(stddev=0.02),
             (N // self.patch_size, self.emb_features),
         )
-        x = x + jnp.broadcast_to(pos_embedding, x.shape)
+        # Positional embedding broadcast check
+        pos_broadcast = jnp.broadcast_to(pos_embedding, x.shape)
+        assert pos_broadcast.shape == x.shape, (
+            f"positional embedding broadcast failed: {pos_broadcast.shape} vs "
+            f"x {x.shape}"
+        )
+        x = x + pos_broadcast
 
         for i in range(self.n_blocks):
             x = HEALPixAttentionBlock(
@@ -289,7 +346,15 @@ class HEALPixTransformer(nn.Module):
         # Decode back to patch space.
         x = nn.LayerNorm()(x)
         x = nn.Dense(self.patch_size * C)(x)
+        # Decode shape checks
+        assert x.shape[-1] == self.patch_size * C, (
+            f"Decoder output last dim should be {self.patch_size*C}, got "
+            f"{x.shape}"
+        )
         x = x.reshape(*batch_dim, N, C)
+        assert x.shape[-2:] == (N, C), (
+            f"Final reshape to (N, C) failed, got {x.shape}"
+        )
         return x
 
 
@@ -347,6 +412,11 @@ class FlatHEALPixTransformer(HEALPixTransformer):
         Returns:
             Input image with shape (*, N, C).
         """
+        # Validate flat feature dimension matches N*C
+        assert x.shape[-1] == self.healpix_shape[0] * self.healpix_shape[1], (
+            f"FlatHEALPixTransformer.reshape expected last dim "
+            f"N*C={self.healpix_shape[0]*self.healpix_shape[1]}, got {x.shape}"
+        )
         return rearrange(
             x, '... (N C) -> ... N C',
             N=self.healpix_shape[0], C=self.healpix_shape[1]

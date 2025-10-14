@@ -17,5 +17,6 @@ module load openmpi python-mpi
 source $VENVDIR/pyrecon/bin/activate
 
 srun -N 1 -n 8 -c 8 python make_patches.py --dataset_name "T_tot" --noise 7
+srun -N 1 -n 8 -c 8 python make_patches.py --dataset_name "dT_tsz" --noise 0
 srun -N 1 -n 8 -c 8 python make_patches.py --dataset_name "T_tot" --random_pos --noise 7
-srun -N 1 -n 8 -c 8 python make_patches.py --dataset_name "dT_cmblens" --random_pos --noise 7
+srun -N 1 -n 8 -c 8 python make_patches.py --dataset_name "dT_cmblens" --random_pos --noise 0

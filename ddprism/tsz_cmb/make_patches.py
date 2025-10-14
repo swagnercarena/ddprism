@@ -275,7 +275,19 @@ def main(halo_pos, halo_mass, outdir="./patches_out", dataset_name="blah", rando
         out_ids = np.empty((N_local,), dtype=np.int32)
         
     for j, i in enumerate(idx_my):
+        if j % 100 == 0: print(rank, j, flush=True)
+        
         picked = process_patch(nside, halo_pos[i], Npix, nest=False)
+        
+        # FIXME some clusters near boundareis on healpix dont build full diamonds (very rare)
+        # this causes errors. For now, completely drop these clusters.
+        if len(picked) != Npix**2:
+            out_vecs[j] = np.full(out_vecs.shape[1:], np.nan)
+            out_vals[j] = np.full(out_vals.shape[1:], np.nan)
+            if not random_pos:
+                out_mass[j] = halo_mass[i]
+                out_ids[j] = halo_id[i]
+            continue
     
         # we want to match sorted(picked) to sorted(parallel) and then order according to nexted ordering (matches what happens in reorder_diamond())
         parallel = hp.nest2ring(nside, np.arange(len(picked)))
@@ -294,8 +306,6 @@ def main(halo_pos, halo_mass, outdir="./patches_out", dataset_name="blah", rando
         if not random_pos:
             out_mass[j] = halo_mass[i]
             out_ids[j] = halo_id[i]
-    
-        print(rank, out_vecs.shape, out_vals.shape)
 
     # ---- write once per rank ----
     random_str = "random" if random_pos else "halo"

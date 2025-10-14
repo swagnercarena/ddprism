@@ -1,15 +1,58 @@
 """Embedding models for HEALPix CMB data."""
 
-from typing import Sequence
+from typing import Callable, Sequence, Tuple
 
+from einops import rearrange
+from flax import linen as nn
 import jax.numpy as jnp
 from jax import Array
-from flax import linen as nn
-
-from ddprism.embedding_models import AdaLNZeroModulation
 
 
 PERIOD = 1e-1
+
+
+class AdaLNZeroModulation(nn.Module):
+    r"""Produces (gamma,beta,alpha) for adaptive layer norm modulation (adaLN-0)
+
+    adaLN modulation originally proposed in https://arxiv.org/pdf/1709.07871
+    adaLN-Zero modulation applied for DiT in https://arxiv.org/pdf/2212.09748
+    (see Figure 3)
+
+    Arguments:
+        emb_dim: Dimension of the embedding.
+        emb_features: Size of embedding vector
+        activation:  Activation function.
+    """
+    emb_dim: int
+    emb_features: int
+    activation: Callable[..., nn.Module] = nn.silu
+
+    @nn.compact
+    def __call__(self, t: Array) -> Tuple[Array, Array, Array]:
+        """Returns (gamma,beta,alpha) for adaLN-Zero
+
+        Arguments:
+            t: Time to use for modulation. Assumed to have dimension (*, E)
+
+        Returns:
+            Gamma, beta, and alpha for modulation.
+
+        Notes:
+            Assumes embedding dimension is last.
+        """
+        # Initialize final MLP layer with small weights since it outputs
+        # perturbations around 1.
+        kernel_init = nn.initializers.variance_scaling(
+            1e-1, "fan_in", "truncated_normal"
+        )
+
+        t = nn.Dense(self.emb_features)(t)
+        t = self.activation(t)
+        t = nn.Dense(3 * self.emb_dim, kernel_init=kernel_init)(t)
+
+        # Add patch dimension assuming embedding dimension is last.
+        out = rearrange(t, '... C -> ... 1 C')
+        return jnp.array_split(out, 3, axis=-1)
 
 
 class RelativeBias(nn.Module):
@@ -77,10 +120,11 @@ class HEALPixAttention(nn.Module):
 
         # Multihead attention.
         batch_dim = x.shape[:-2]
-        N = x.shape[2]
+        N = x.shape[-2]
         qkv = nn.Dense(3 * self.emb_dim)(x)
         qkv = qkv.reshape(*batch_dim, N, self.n_heads, 3, head_dim)
         q, k, v = jnp.split(qkv, 3, axis=-2)
+        q, k, v = q.squeeze(axis=-2), k.squeeze(axis=-2), v.squeeze(axis=-2)
 
         # Compute attention.
         attention = jnp.einsum('...QHT,...KHT->...QKH', q, k)
@@ -116,7 +160,6 @@ class HEALPixAttentionBlock(nn.Module):
     emb_dim: int
     n_heads: int
     time_emb_dim: int
-    qkv_dim: int
     dropout_rate: float
     mlp_ratio: int = 4
     use_bias: bool = True
@@ -227,7 +270,7 @@ class HEALPixTransformer(nn.Module):
             x = HEALPixAttentionBlock(
                 self.emb_dim, self.heads, self.time_emb_dim,
                 self.dropout_rate_block[i]
-            )(x, t, vec_map,train=train)
+            )(x, t, vec_map, train=train)
 
         # Decode back to patch space.
         x = nn.LayerNorm()(x)

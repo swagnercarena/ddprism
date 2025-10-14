@@ -1,7 +1,7 @@
 """Embedding models for use in diffusion."""
 
 import math
-from typing import Any, Callable, Mapping, Optional, Sequence, Tuple
+from typing import Callable, Mapping, Sequence, Tuple
 
 from flax import linen as nn
 import jax
@@ -263,7 +263,7 @@ class AttBlock(nn.Module):
         Returns:
             Residual block output.
         """
-        # perform adaLN-Zero modulation to condition on t
+        # Perform adaLN-Zero modulation to condition on t
         gamma, beta, alpha = (
             AdaLNZeroModulation(self.channels, self.emb_features)(t)
         )

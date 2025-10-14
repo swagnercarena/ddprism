@@ -356,3 +356,72 @@ class FlatHEALPixTransformer(HEALPixTransformer):
     def feat_dim(self):
         """Get the feature dimension."""
         return self.healpix_shape[0] * self.healpix_shape[1]
+
+
+class BroadcastHEALPixTransformer(HEALPixTransformer):
+    """Wrapper class for sources with known frequency scaling.
+
+    Arguments:
+        emb_features: Dimension of the embedding.
+        n_blocks: Number of transformer blocks.
+        dropout_rate_block: Dropout rate for each transformer block.
+        heads: Number of heads in the attention mechanism.
+        patch_size: Size of the patch to divide the input map into.
+        time_emb_features: Size of the embedding vector that encodes the time
+            features.
+        freq_features: Number of frequency features for the relative bias.
+        healpix_shape: Healpix shape with the number of channels.
+    """
+    healpix_shape: Sequence[int] = None
+
+    def setup(self):
+        # Check image shape meets the requirements.
+        assert self.healpix_shape is not None
+        assert len(self.healpix_shape) == 2
+        super().setup()
+
+    @nn.compact
+    def __call__(
+        self, x: Array, t: Array, vec_map: Array, train: bool = True
+    ) -> Array:
+        """Reshape image for transformer call and then reflatten.
+
+        Arguments:
+            x: Input image with shape (*, (N C)).
+            t: Time embedding, with shape (*, E).
+            vec_map: Vector direction map with shape (*, N, 3).
+            train: If true, values are passed in training mode.
+
+        Returns:
+            Output with shape (*, (N C)).
+        """
+        # Unflatten x.
+        x = self.reshape(x)
+        # Average over the frequency dimension.
+        x = jnp.mean(x, axis=-1, keepdims=True)
+        x = super().__call__(x, t, vec_map, train)
+        # Broadcast back to frequency dimension.
+        x = jnp.broadcast_to(x, x.shape[:-1] + (self.healpix_shape[1],))
+        # Flatten.
+        x = rearrange(x, '... N C -> ... (N C)')
+
+        return x
+
+    def reshape(self, x:Array) -> Array:
+        """Reshape flattened image.
+
+        Arguments:
+            x: Input image with shape (*, (N C)).
+
+        Returns:
+            Input image with shape (*, N, C).
+        """
+        return rearrange(
+            x, '... (N C) -> ... N C',
+            N=self.healpix_shape[0], C=self.healpix_shape[1]
+        )
+
+    @property
+    def feat_dim(self):
+        """Get the feature dimension."""
+        return self.healpix_shape[0] * self.healpix_shape[1]

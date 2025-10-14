@@ -1,0 +1,22 @@
+#!/bin/bash
+#SBATCH -J make_patches
+#SBATCH -C genoa
+#SBATCH -p gen
+#SBATCH -t 20:00:00
+#SBATCH --nodes=1
+#SBATCH --ntasks-per-node=8
+#SBATCH --cpus-per-task=8
+#SBATCH --mem=600G
+#SBATCH -o /mnt/ceph/users/abayer/joboutput/make_patches.o%j
+#SBATCH --mail-user=abayer@berkeley.edu
+#SBATCH --mail-type=all
+
+module load modules/2.2
+module load python/3.10.10
+module load openmpi python-mpi
+source $VENVDIR/pyrecon/bin/activate
+
+srun -N 1 -n 8 -c 8 python make_patches.py --dataset_name "T_tot" --noise 7
+srun -N 1 -n 8 -c 8 python make_patches.py --dataset_name "dT_tsz" --noise 0
+srun -N 1 -n 8 -c 8 python make_patches.py --dataset_name "T_tot" --random_pos --noise 7
+srun -N 1 -n 8 -c 8 python make_patches.py --dataset_name "dT_cmblens" --random_pos --noise 0

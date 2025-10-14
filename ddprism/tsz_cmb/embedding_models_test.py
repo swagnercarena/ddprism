@@ -201,5 +201,62 @@ class HEALPixTransformerTests(chex.TestCase):
         self.assertTupleEqual(output_inference.shape, expected_shape)
 
 
+class FlatHEALPixTransformerTest(chex.TestCase):
+    """Run tests for the FlatUNet."""
+
+    @chex.all_variants
+    def test_call(self):
+        """Test that the FlatUNet returns the desired outputs."""
+        rng = jax.random.PRNGKey(5)
+        emb_dim = 4
+        n_blocks = 3
+        dropout_rate_block = [0.1, 0.1, 0.1]
+        heads = 4
+        patch_size = 4
+        time_emb_dim = 16
+        channels = 2
+        nside = 8
+        n_pixels = 8 ** 2
+        batch_size = 2
+
+        # Create vector map
+        vec_map = jnp.stack(
+            hp.pix2vec(nside, jnp.arange(n_pixels), nest=True), axis=-1
+        )
+        vec_map = jnp.stack([vec_map] * batch_size, axis=0)
+
+        # Create test inputs
+        x = jax.random.normal(rng, (batch_size, n_pixels, channels))
+        t = jax.random.normal(rng, (batch_size, time_emb_dim))
+
+        # Flatten the input and create healpix_shape.
+        x_flat = x.reshape(x.shape[:-2] + (-1,))
+        healpix_shape = x.shape[-2:]
+
+        # Initialize HEALPixTransformer
+        transformer = embedding_models.FlatHEALPixTransformer(
+            emb_dim=emb_dim,
+            n_blocks=n_blocks,
+            dropout_rate_block=dropout_rate_block,
+            heads=heads,
+            patch_size=patch_size,
+            time_emb_dim=time_emb_dim,
+            healpix_shape=healpix_shape
+        )
+        params = transformer.init(
+            {'params': rng, 'dropout': rng}, x_flat, t, vec_map, train=True
+        )
+        apply_func = self.variant(
+            transformer.apply, static_argnames=['train']
+        )
+
+        # Test output shape
+        output = apply_func(
+            params, x_flat, t, vec_map, train=True, rngs={'dropout': rng}
+        )
+        expected_shape = (batch_size, n_pixels * channels)
+        self.assertTupleEqual(output.shape, expected_shape)
+
+
 if __name__ == '__main__':
     absltest.main()

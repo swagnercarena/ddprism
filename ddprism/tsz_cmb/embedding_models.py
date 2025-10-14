@@ -277,3 +277,65 @@ class HEALPixTransformer(nn.Module):
         x = nn.Dense(self.patch_size * C)(x)
         x = x.reshape(*batch_dim, N, C)
         return x
+
+
+class FlatHEALPixTransformer(HEALPixTransformer):
+    """Wrapper class for dealing with (channel) flattened HEALPix data.
+
+    Arguments:
+        emb_dim: Dimension of the embedding.
+        n_blocks: Number of transformer blocks.
+        dropout_rate_block: Dropout rate for each transformer block.
+        heads: Number of heads in the attention mechanism.
+        patch_size: Size of the patch to divide the input map into.
+        emb_features: Size of the embedding vector that encodes the time
+            features.
+        healpix_shape: Healpix shape with the number of channels.
+    """
+    healpix_shape: Sequence[int] = None
+
+    def setup(self):
+        # Check image shape meets the requirements.
+        assert self.healpix_shape is not None
+        assert len(self.healpix_shape) == 2
+
+    @nn.compact
+    def __call__(
+        self, x: Array, t: Array, vec_map: Array, train: bool = True
+    ) -> Array:
+        """Reshape image for transformer call and then reflatten.
+
+        Arguments:
+            x: Input image with shape (*, (N C)).
+            t: Time embedding, with shape (*, E).
+            train: If true, values are passed in training mode.
+
+        Returns:
+            Output with shape (*, (N C)).
+        """
+        # Unflatten x.
+        x = self.reshape(x)
+        x = super().__call__(x, t, vec_map, train)
+        # Flatten.
+        x = rearrange(x, '... N C -> ... (N C)')
+
+        return x
+
+    def reshape(self, x:Array) -> Array:
+        """Reshape flattened image.
+
+        Arguments:
+            x: Input image with shape (*, (N C)).
+
+        Returns:
+            Input image with shape (*, N, C).
+        """
+        return rearrange(
+            x, '... (N C) -> ... N C',
+            N=self.healpix_shape[0], C=self.healpix_shape[1]
+        )
+
+    @property
+    def feat_dim(self):
+        """Get the feature dimension."""
+        return self.healpix_shape[0] * self.healpix_shape[1]

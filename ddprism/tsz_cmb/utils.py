@@ -16,7 +16,7 @@ def xyz_to_lonlat(xyz):
     lat : array, shape (N,)
         Latitude in degrees, in the range [-90, 90].
     """
-    x, y, z = xyz[:, 0], xyz[:, 1], xyz[:, 2]
+    x, y, z = xyz[..., 0], xyz[..., 1], xyz[..., 2]
     
     ra = np.arctan2(y, x) % (2*np.pi) # wrap to [0, 2π)
     dec = np.arcsin(z / np.sqrt(x**2 + y**2 + z**2)) # [-π/2, π/2]

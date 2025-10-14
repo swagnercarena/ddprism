@@ -220,7 +220,7 @@ class HEALPixTransformer(nn.Module):
         dropout_rate_block: Dropout rate for each transformer block.
         heads: Number of heads in the attention mechanism.
         patch_size: Size of the patch to divide the input map into.
-        emb_features: Size of the embedding vector that encodes the time
+        time_emb_dim: Size of the embedding vector that encodes the time
             features.
     """
     emb_dim: int
@@ -288,7 +288,7 @@ class FlatHEALPixTransformer(HEALPixTransformer):
         dropout_rate_block: Dropout rate for each transformer block.
         heads: Number of heads in the attention mechanism.
         patch_size: Size of the patch to divide the input map into.
-        emb_features: Size of the embedding vector that encodes the time
+        time_emb_dim: Size of the embedding vector that encodes the time
             features.
         healpix_shape: Healpix shape with the number of channels.
     """

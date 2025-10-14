@@ -72,8 +72,9 @@ class RelativeBias(nn.Module):
             vec_map: Vector direction map with shape (*, N, 3).
         """
         # Get the angular distance between all pairs of vectors.
+        vec_map = vec_map / jnp.linalg.norm(vec_map, axis=-1, keepdims=True)
         dot = jnp.einsum('...NK,...MK->...NM', vec_map, vec_map)
-        angle = jnp.arccos(jnp.clip(dot,0.0,1.0)) / 1e-3
+        angle = jnp.arccos(jnp.clip(dot, -1.0, 1.0)) / 1e-3
 
         # Get the embedded distance between all pairs of vectors.
         freqs = jnp.linspace(0, 1, self.freq_features // 2)
@@ -96,20 +97,20 @@ class HEALPixAttention(nn.Module):
         emb_features: Dimension of the embedding.
         n_heads: Number of heads in the attention mechanism.
         dropout_rate: Dropout rate.
-        use_bias: If true, bias will be included in the attention mechanism.
     """
     emb_features: int
     n_heads: int
     dropout_rate: float
-    use_bias: bool
 
     @nn.compact
-    def __call__(self, x:Array, vec_map:Array, train:bool=True) -> Array:
+    def __call__(
+        self, x:Array, relative_bias_logits:Array, train:bool=True
+    ) -> Array:
         """Call the attention mechanism.
 
         Arguments:
             x: Input map with shape (*, N, D).
-            vec_map: Vector direction map with shape (*, N, 3).
+            relative_bias_logits: Relative bias logits with shape (*, N, N, H).
             train: If true, values are passed in training mode.
 
         Returns:
@@ -127,18 +128,18 @@ class HEALPixAttention(nn.Module):
         q, k, v = q.squeeze(axis=-2), k.squeeze(axis=-2), v.squeeze(axis=-2)
 
         # Compute attention.
-        attention = jnp.einsum('...QHT,...KHT->...QKH', q, k)
-        attention = attention / jnp.sqrt(head_dim)
+        logits = jnp.einsum('...QHT,...KHT->...QKH', q, k)
+        logits = logits / jnp.sqrt(head_dim)
+
+        # Add relative bias to attention.
+        logits = logits + relative_bias_logits
+
         # Make sure softmax is on the key dimension.
-        attention -= jnp.max(attention, axis=-2, keepdims=True)
-        attention = nn.softmax(attention, axis=-2)
+        logits -= jnp.max(logits, axis=-2, keepdims=True)
+        attention = nn.softmax(logits, axis=-2)
         attention = nn.Dropout(self.dropout_rate)(
             attention, deterministic=not train
         )
-
-        # Add relative bias to attention.
-        relative_bias = RelativeBias(self.n_heads)(vec_map)
-        attention = attention + relative_bias
 
         # Attend with relative bias.
         y = jnp.einsum('...QKH,...KHT->...QHT', attention, v)
@@ -162,18 +163,17 @@ class HEALPixAttentionBlock(nn.Module):
     time_emb_features: int
     dropout_rate: float
     mlp_ratio: int = 4
-    use_bias: bool = True
 
     @nn.compact
     def __call__(
-        self, x:Array, t:Array, vec_map:Array, train:bool=True
+        self, x:Array, t:Array, relative_bias_logits:Array, train:bool=True
     ) -> Array:
         """Call the attention block.
 
         Arguments:
             x: Input map with shape (*, N, D).
             t: Time embedding with shape (*, E).
-            vec_map: Vector direction map with shape (*, N, 3).
+            relative_bias_logits: Relative bias logits with shape (*, N, N, H).
             train: If true, values are passed in training mode.
 
         Returns:
@@ -187,8 +187,8 @@ class HEALPixAttentionBlock(nn.Module):
         y = (gamma_one + 1) * y + beta_one
 
         y = HEALPixAttention(
-            self.emb_features, self.n_heads, self.dropout_rate, self.use_bias
-        )(y, vec_map, train=train)
+            self.emb_features, self.n_heads, self.dropout_rate
+        )(y, relative_bias_logits, train=train)
 
         # Last step of adaLN-Zero modulation.
         x = x + (alpha_one * y / jnp.sqrt(1 + alpha_one ** 2))
@@ -222,6 +222,7 @@ class HEALPixTransformer(nn.Module):
         patch_size: Size of the patch to divide the input map into.
         time_emb_features: Size of the embedding vector that encodes the time
             features.
+        freq_features: Number of frequency features for the relative bias.
     """
     emb_features: int
     n_blocks: int
@@ -229,6 +230,12 @@ class HEALPixTransformer(nn.Module):
     heads: int
     patch_size: int
     time_emb_features: int
+    freq_features: int = 64
+
+    def setup(self):
+        self.relative_bias = RelativeBias(
+            self.heads, freq_features=self.freq_features
+        )
 
     @nn.compact
     def __call__(
@@ -250,11 +257,18 @@ class HEALPixTransformer(nn.Module):
         N, C = x.shape[-2:]
         x = x.reshape(*batch_dim, N // self.patch_size, self.patch_size * C)
 
+        # Shape validations.
+        assert N % self.patch_size == 0, "N must be divisible by patch_size"
+        assert len(self.dropout_rate_block) == self.n_blocks
+
         # Set the vector of each patch to the average of the patches.
         vec_map = vec_map.reshape(
             *batch_dim, N // self.patch_size, self.patch_size, 3
         )
         vec_map = jnp.mean(vec_map, axis=-2)
+
+        # Compute the shared relative bias logits.
+        relative_bias_logits = self.relative_bias(vec_map)
 
         # Embed the input map to have dimension (B, N // patch_size, D) and add
         # absolute positional embedding for each patch.
@@ -270,7 +284,7 @@ class HEALPixTransformer(nn.Module):
             x = HEALPixAttentionBlock(
                 self.emb_features, self.heads, self.time_emb_features,
                 self.dropout_rate_block[i]
-            )(x, t, vec_map, train=train)
+            )(x, t, relative_bias_logits, train=train)
 
         # Decode back to patch space.
         x = nn.LayerNorm()(x)
@@ -290,6 +304,7 @@ class FlatHEALPixTransformer(HEALPixTransformer):
         patch_size: Size of the patch to divide the input map into.
         time_emb_features: Size of the embedding vector that encodes the time
             features.
+        freq_features: Number of frequency features for the relative bias.
         healpix_shape: Healpix shape with the number of channels.
     """
     healpix_shape: Sequence[int] = None
@@ -298,6 +313,7 @@ class FlatHEALPixTransformer(HEALPixTransformer):
         # Check image shape meets the requirements.
         assert self.healpix_shape is not None
         assert len(self.healpix_shape) == 2
+        super().setup()
 
     @nn.compact
     def __call__(
@@ -308,6 +324,7 @@ class FlatHEALPixTransformer(HEALPixTransformer):
         Arguments:
             x: Input image with shape (*, (N C)).
             t: Time embedding, with shape (*, E).
+            vec_map: Vector direction map with shape (*, N, 3).
             train: If true, values are passed in training mode.
 
         Returns:

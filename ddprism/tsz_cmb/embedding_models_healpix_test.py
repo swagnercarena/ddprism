@@ -59,7 +59,6 @@ class HEALPixAttentionTests(chex.TestCase):
         emb_features = 64
         n_heads = 4
         dropout_rate = 0.1
-        use_bias = True
         nside = 8
         n_pixels = 8 ** 2
         batch_size = 2
@@ -70,28 +69,36 @@ class HEALPixAttentionTests(chex.TestCase):
         )
         vec_map = jnp.stack([vec_map] * batch_size, axis=0)
 
+        # Normalize to relative bias logits.
+        relative_bias = embedding_models_healpix.RelativeBias(
+            n_heads=n_heads, freq_features=64
+        )
+        params_bias = relative_bias.init(rng, vec_map)
+        relative_bias_logits = relative_bias.apply(params_bias, vec_map)
+
         # Create test inputs
         x = jax.random.normal(rng, (batch_size, n_pixels, emb_features))
 
         # Initialize HEALPixAttention
         attention = embedding_models_healpix.HEALPixAttention(
             emb_features=emb_features, n_heads=n_heads, dropout_rate=dropout_rate,
-            use_bias=use_bias
         )
         params = attention.init(
-            {'params': rng, 'dropout': rng}, x, vec_map, train=True
+            {'params': rng, 'dropout': rng}, x, relative_bias_logits, train=True
         )
         apply_func = self.variant(attention.apply, static_argnames=['train'])
 
         # Test output shape
         output = apply_func(
-            params, x, vec_map, train=True, rngs={'dropout': rng}
+            params, x, relative_bias_logits, train=True, rngs={'dropout': rng}
         )
         expected_shape = (batch_size, n_pixels, emb_features)
         self.assertTupleEqual(output.shape, expected_shape)
 
         # Test inference mode
-        output_inference = apply_func(params, x, vec_map, train=False)
+        output_inference = apply_func(
+            params, x, relative_bias_logits, train=False
+        )
         self.assertTupleEqual(output_inference.shape, expected_shape)
 
 
@@ -116,6 +123,13 @@ class HEALPixAttentionBlockTests(chex.TestCase):
         )
         vec_map = jnp.stack([vec_map] * batch_size, axis=0)
 
+        # Normalize to relative bias logits.
+        relative_bias = embedding_models_healpix.RelativeBias(
+            n_heads=n_heads, freq_features=64
+        )
+        params_bias = relative_bias.init(rng, vec_map)
+        relative_bias_logits = relative_bias.apply(params_bias, vec_map)
+
         # Create test inputs
         x = jax.random.normal(rng, (batch_size, n_pixels, emb_features))
         t = jax.random.normal(rng, (batch_size, time_emb_features))
@@ -128,7 +142,8 @@ class HEALPixAttentionBlockTests(chex.TestCase):
             dropout_rate=dropout_rate
         )
         params = attention_block.init(
-            {'params': rng, 'dropout': rng}, x, t, vec_map, train=True
+            {'params': rng, 'dropout': rng}, x, t, relative_bias_logits,
+            train=True
         )
         apply_func = self.variant(
             attention_block.apply, static_argnames=['train']
@@ -136,7 +151,8 @@ class HEALPixAttentionBlockTests(chex.TestCase):
 
         # Test output shape
         output = apply_func(
-            params, x, t, vec_map, train=True, rngs={'dropout': rng}
+            params, x, t, relative_bias_logits, train=True,
+            rngs={'dropout': rng}
         )
         expected_shape = (batch_size, n_pixels, emb_features)
         self.assertTupleEqual(output.shape, expected_shape)

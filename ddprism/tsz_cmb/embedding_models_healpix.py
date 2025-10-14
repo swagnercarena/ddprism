@@ -19,12 +19,12 @@ class AdaLNZeroModulation(nn.Module):
     (see Figure 3)
 
     Arguments:
-        emb_dim: Dimension of the embedding.
-        emb_features: Size of embedding vector
+        emb_features: Dimension of the embedding.
+        time_emb_features: Size of embedding vector
         activation:  Activation function.
     """
-    emb_dim: int
     emb_features: int
+    time_emb_features: int
     activation: Callable[..., nn.Module] = nn.silu
 
     @nn.compact
@@ -46,9 +46,9 @@ class AdaLNZeroModulation(nn.Module):
             1e-1, "fan_in", "truncated_normal"
         )
 
-        t = nn.Dense(self.emb_features)(t)
+        t = nn.Dense(self.time_emb_features)(t)
         t = self.activation(t)
-        t = nn.Dense(3 * self.emb_dim, kernel_init=kernel_init)(t)
+        t = nn.Dense(3 * self.emb_features, kernel_init=kernel_init)(t)
 
         # Add patch dimension assuming embedding dimension is last.
         out = rearrange(t, '... C -> ... 1 C')
@@ -93,12 +93,12 @@ class HEALPixAttention(nn.Module):
     """Attention for HEALPix CMB data.
 
     Arguments:
-        emb_dim: Dimension of the embedding.
+        emb_features: Dimension of the embedding.
         n_heads: Number of heads in the attention mechanism.
         dropout_rate: Dropout rate.
         use_bias: If true, bias will be included in the attention mechanism.
     """
-    emb_dim: int
+    emb_features: int
     n_heads: int
     dropout_rate: float
     use_bias: bool
@@ -115,13 +115,13 @@ class HEALPixAttention(nn.Module):
         Returns:
             Output with shape (*, N, D).
         """
-        head_dim = self.emb_dim // self.n_heads
-        assert head_dim * self.n_heads == self.emb_dim
+        head_dim = self.emb_features // self.n_heads
+        assert head_dim * self.n_heads == self.emb_features
 
         # Multihead attention.
         batch_dim = x.shape[:-2]
         N = x.shape[-2]
-        qkv = nn.Dense(3 * self.emb_dim)(x)
+        qkv = nn.Dense(3 * self.emb_features)(x)
         qkv = qkv.reshape(*batch_dim, N, self.n_heads, 3, head_dim)
         q, k, v = jnp.split(qkv, 3, axis=-2)
         q, k, v = q.squeeze(axis=-2), k.squeeze(axis=-2), v.squeeze(axis=-2)
@@ -142,8 +142,8 @@ class HEALPixAttention(nn.Module):
 
         # Attend with relative bias.
         y = jnp.einsum('...QKH,...KHT->...QHT', attention, v)
-        y = y.reshape(*batch_dim, N, self.emb_dim)
-        y = nn.Dense(self.emb_dim)(y)
+        y = y.reshape(*batch_dim, N, self.emb_features)
+        y = nn.Dense(self.emb_features)(y)
         y = nn.Dropout(self.dropout_rate)(y, deterministic=not train)
         return y
 
@@ -152,14 +152,14 @@ class HEALPixAttentionBlock(nn.Module):
     """Transformer block for HEALPix CMB data.
 
     Arguments:
-        emb_dim: Dimension of the embedding.
+        emb_features: Dimension of the embedding.
         n_heads: Number of heads in the attention mechanism.
-        time_emb_dim: Dimension of the time embedding.
+        time_emb_features: Dimension of the time embedding.
         dropout_rate: Dropout rate.
     """
-    emb_dim: int
+    emb_features: int
     n_heads: int
-    time_emb_dim: int
+    time_emb_features: int
     dropout_rate: float
     mlp_ratio: int = 4
     use_bias: bool = True
@@ -181,13 +181,13 @@ class HEALPixAttentionBlock(nn.Module):
         """
         # Perform adaLN-Zero modulation to condition on t.
         gamma_one, beta_one, alpha_one = (
-            AdaLNZeroModulation(self.emb_dim, self.time_emb_dim)(t)
+            AdaLNZeroModulation(self.emb_features, self.time_emb_features)(t)
         )
         y = nn.LayerNorm(use_bias=False, use_scale=False)(x)
         y = (gamma_one + 1) * y + beta_one
 
         y = HEALPixAttention(
-            self.emb_dim, self.n_heads, self.dropout_rate, self.use_bias
+            self.emb_features, self.n_heads, self.dropout_rate, self.use_bias
         )(y, vec_map, train=train)
 
         # Last step of adaLN-Zero modulation.
@@ -195,15 +195,15 @@ class HEALPixAttentionBlock(nn.Module):
 
         # Pointwise MLP.
         gamma_two, beta_two, alpha_two = (
-            AdaLNZeroModulation(self.emb_dim, self.time_emb_dim)(t)
+            AdaLNZeroModulation(self.emb_features, self.time_emb_features)(t)
         )
         y = nn.LayerNorm(use_bias=False, use_scale=False)(x)
         y = (gamma_two + 1) * y + beta_two
 
         # MLP for pointwise feedforward.
-        y = nn.Dense(self.emb_dim * self.mlp_ratio)(y)
+        y = nn.Dense(self.emb_features * self.mlp_ratio)(y)
         y = nn.gelu(y)
-        y = nn.Dense(self.emb_dim)(y)
+        y = nn.Dense(self.emb_features)(y)
 
         # Last step of adaLN-Zero modulation.
         x = x + (alpha_two * y / jnp.sqrt(1 + alpha_two ** 2))
@@ -215,20 +215,20 @@ class HEALPixTransformer(nn.Module):
     r"""Creates a time conditioned HEALPix transformer.
 
     Arguments:
-        emb_dim: Dimension of the embedding.
+        emb_features: Dimension of the embedding.
         n_blocks: Number of transformer blocks.
         dropout_rate_block: Dropout rate for each transformer block.
         heads: Number of heads in the attention mechanism.
         patch_size: Size of the patch to divide the input map into.
-        time_emb_dim: Size of the embedding vector that encodes the time
+        time_emb_features: Size of the embedding vector that encodes the time
             features.
     """
-    emb_dim: int
+    emb_features: int
     n_blocks: int
     dropout_rate_block: Sequence[float]
     heads: int
     patch_size: int
-    time_emb_dim: int
+    time_emb_features: int
 
     @nn.compact
     def __call__(
@@ -258,17 +258,17 @@ class HEALPixTransformer(nn.Module):
 
         # Embed the input map to have dimension (B, N // patch_size, D) and add
         # absolute positional embedding for each patch.
-        x = nn.Dense(self.emb_dim)(x)
+        x = nn.Dense(self.emb_features)(x)
         pos_embedding = self.param(
             "pos_embedding",
             nn.initializers.normal(stddev=0.02),
-            (N // self.patch_size, self.emb_dim),
+            (N // self.patch_size, self.emb_features),
         )
         x = x + jnp.broadcast_to(pos_embedding, x.shape)
 
         for i in range(self.n_blocks):
             x = HEALPixAttentionBlock(
-                self.emb_dim, self.heads, self.time_emb_dim,
+                self.emb_features, self.heads, self.time_emb_features,
                 self.dropout_rate_block[i]
             )(x, t, vec_map, train=train)
 
@@ -283,12 +283,12 @@ class FlatHEALPixTransformer(HEALPixTransformer):
     """Wrapper class for dealing with (channel) flattened HEALPix data.
 
     Arguments:
-        emb_dim: Dimension of the embedding.
+        emb_features: Dimension of the embedding.
         n_blocks: Number of transformer blocks.
         dropout_rate_block: Dropout rate for each transformer block.
         heads: Number of heads in the attention mechanism.
         patch_size: Size of the patch to divide the input map into.
-        time_emb_dim: Size of the embedding vector that encodes the time
+        time_emb_features: Size of the embedding vector that encodes the time
             features.
         healpix_shape: Healpix shape with the number of channels.
     """

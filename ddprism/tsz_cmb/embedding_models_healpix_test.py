@@ -56,7 +56,7 @@ class HEALPixAttentionTests(chex.TestCase):
     def test_call(self):
         """Test that HEALPixAttention returns correct shapes."""
         rng = jax.random.PRNGKey(1)
-        emb_dim = 64
+        emb_features = 64
         n_heads = 4
         dropout_rate = 0.1
         use_bias = True
@@ -71,11 +71,11 @@ class HEALPixAttentionTests(chex.TestCase):
         vec_map = jnp.stack([vec_map] * batch_size, axis=0)
 
         # Create test inputs
-        x = jax.random.normal(rng, (batch_size, n_pixels, emb_dim))
+        x = jax.random.normal(rng, (batch_size, n_pixels, emb_features))
 
         # Initialize HEALPixAttention
         attention = embedding_models_healpix.HEALPixAttention(
-            emb_dim=emb_dim, n_heads=n_heads, dropout_rate=dropout_rate,
+            emb_features=emb_features, n_heads=n_heads, dropout_rate=dropout_rate,
             use_bias=use_bias
         )
         params = attention.init(
@@ -87,7 +87,7 @@ class HEALPixAttentionTests(chex.TestCase):
         output = apply_func(
             params, x, vec_map, train=True, rngs={'dropout': rng}
         )
-        expected_shape = (batch_size, n_pixels, emb_dim)
+        expected_shape = (batch_size, n_pixels, emb_features)
         self.assertTupleEqual(output.shape, expected_shape)
 
         # Test inference mode
@@ -102,9 +102,9 @@ class HEALPixAttentionBlockTests(chex.TestCase):
     def test_call(self):
         """Test that HEALPixAttentionBlock returns correct shapes."""
         rng = jax.random.PRNGKey(3)
-        emb_dim = 16
+        emb_features = 16
         n_heads = 4
-        time_emb_dim = 32
+        time_emb_features = 32
         dropout_rate = 0.1
         nside = 8
         n_pixels = 8 ** 2
@@ -117,14 +117,14 @@ class HEALPixAttentionBlockTests(chex.TestCase):
         vec_map = jnp.stack([vec_map] * batch_size, axis=0)
 
         # Create test inputs
-        x = jax.random.normal(rng, (batch_size, n_pixels, emb_dim))
-        t = jax.random.normal(rng, (batch_size, time_emb_dim))
+        x = jax.random.normal(rng, (batch_size, n_pixels, emb_features))
+        t = jax.random.normal(rng, (batch_size, time_emb_features))
 
         # Initialize HEALPixAttentionBlock
         attention_block = embedding_models_healpix.HEALPixAttentionBlock(
-            emb_dim=emb_dim,
+            emb_features=emb_features,
             n_heads=n_heads,
-            time_emb_dim=time_emb_dim,
+            time_emb_features=time_emb_features,
             dropout_rate=dropout_rate
         )
         params = attention_block.init(
@@ -138,7 +138,7 @@ class HEALPixAttentionBlockTests(chex.TestCase):
         output = apply_func(
             params, x, t, vec_map, train=True, rngs={'dropout': rng}
         )
-        expected_shape = (batch_size, n_pixels, emb_dim)
+        expected_shape = (batch_size, n_pixels, emb_features)
         self.assertTupleEqual(output.shape, expected_shape)
 
         # Test that it's a residual connection (output should be different from input)
@@ -152,12 +152,12 @@ class HEALPixTransformerTests(chex.TestCase):
     def test_call(self):
         """Test that HEALPixTransformer returns correct shapes."""
         rng = jax.random.PRNGKey(5)
-        emb_dim = 4
+        emb_features = 4
         n_blocks = 3
         dropout_rate_block = [0.1, 0.1, 0.1]
         heads = 4
         patch_size = 4
-        time_emb_dim = 16
+        time_emb_features = 16
         channels = 2
         nside = 8
         n_pixels = 8 ** 2
@@ -171,16 +171,16 @@ class HEALPixTransformerTests(chex.TestCase):
 
         # Create test inputs
         x = jax.random.normal(rng, (batch_size, n_pixels, channels))
-        t = jax.random.normal(rng, (batch_size, time_emb_dim))
+        t = jax.random.normal(rng, (batch_size, time_emb_features))
 
         # Initialize HEALPixTransformer
         transformer = embedding_models_healpix.HEALPixTransformer(
-            emb_dim=emb_dim,
+            emb_features=emb_features,
             n_blocks=n_blocks,
             dropout_rate_block=dropout_rate_block,
             heads=heads,
             patch_size=patch_size,
-            time_emb_dim=time_emb_dim
+            time_emb_features=time_emb_features
         )
         params = transformer.init(
             {'params': rng, 'dropout': rng}, x, t, vec_map, train=True
@@ -208,12 +208,12 @@ class FlatHEALPixTransformerTest(chex.TestCase):
     def test_call(self):
         """Test that the FlatUNet returns the desired outputs."""
         rng = jax.random.PRNGKey(5)
-        emb_dim = 4
+        emb_features = 4
         n_blocks = 3
         dropout_rate_block = [0.1, 0.1, 0.1]
         heads = 4
         patch_size = 4
-        time_emb_dim = 16
+        time_emb_features = 16
         channels = 2
         nside = 8
         n_pixels = 8 ** 2
@@ -227,7 +227,7 @@ class FlatHEALPixTransformerTest(chex.TestCase):
 
         # Create test inputs
         x = jax.random.normal(rng, (batch_size, n_pixels, channels))
-        t = jax.random.normal(rng, (batch_size, time_emb_dim))
+        t = jax.random.normal(rng, (batch_size, time_emb_features))
 
         # Flatten the input and create healpix_shape.
         x_flat = x.reshape(x.shape[:-2] + (-1,))
@@ -235,12 +235,12 @@ class FlatHEALPixTransformerTest(chex.TestCase):
 
         # Initialize HEALPixTransformer
         transformer = embedding_models_healpix.FlatHEALPixTransformer(
-            emb_dim=emb_dim,
+            emb_features=emb_features,
             n_blocks=n_blocks,
             dropout_rate_block=dropout_rate_block,
             heads=heads,
             patch_size=patch_size,
-            time_emb_dim=time_emb_dim,
+            time_emb_features=time_emb_features,
             healpix_shape=healpix_shape
         )
         params = transformer.init(

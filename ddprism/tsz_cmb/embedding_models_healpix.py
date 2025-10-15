@@ -6,6 +6,7 @@ from einops import rearrange
 from flax import linen as nn
 import jax.numpy as jnp
 from jax import Array
+import numpy as np
 
 
 PERIOD = 1e-1
@@ -74,7 +75,7 @@ class RelativeBias(nn.Module):
         # Get the angular distance between all pairs of vectors.
         vec_map = vec_map / jnp.linalg.norm(vec_map, axis=-1, keepdims=True)
         dot = jnp.einsum('...NK,...MK->...NM', vec_map, vec_map)
-        angle = jnp.arccos(jnp.clip(dot, -1.0, 1.0)) / 1e-3
+        angle = jnp.arccos(jnp.clip(dot, -1.0, 1.0)) / 5e-3
 
         # Get the embedded distance between all pairs of vectors.
         freqs = jnp.linspace(0, 1, self.freq_features // 2)
@@ -249,7 +250,7 @@ class HEALPixTransformer(nn.Module):
         n_blocks: Number of transformer blocks.
         dropout_rate_block: Dropout rate for each transformer block.
         heads: Number of heads in the attention mechanism.
-        patch_size: Size of the patch to divide the input map into.
+        patch_size_list: Size of each path to build an attention path for.
         time_emb_features: Size of the embedding vector that encodes the time
             features.
         freq_features: Number of frequency features for the relative bias.
@@ -258,7 +259,7 @@ class HEALPixTransformer(nn.Module):
     n_blocks: int
     dropout_rate_block: Sequence[float]
     heads: int
-    patch_size: int
+    patch_size_list: Sequence[int]
     time_emb_features: int
     freq_features: int = 64
 
@@ -303,31 +304,48 @@ class HEALPixTransformer(nn.Module):
             f"{vec_map.shape[-2]}"
         )
 
-        # Start by patchifying the input map.
-        batch_dim = x.shape[:-2]
-        N, C = x.shape[-2:]
-        x = x.reshape(*batch_dim, N // self.patch_size, self.patch_size * C)
-
         # Shape validations.
-        assert N % self.patch_size == 0, "N must be divisible by patch_size"
+        N, C = x.shape[-2:]
+        for patch_size in self.patch_size_list:
+            assert N % patch_size == 0, "N must be divisible by all patch_size"
         assert len(self.dropout_rate_block) == self.n_blocks
 
+        # Start by patchifying the input map and embedding each patch.
+        x_list = [
+            rearrange(x, '... (N P) C -> ... N (P C)', P=patch_size)
+            for patch_size in self.patch_size_list
+        ]
+
         # Set the vector of each patch to the average of the patches.
-        vec_map = vec_map.reshape(
-            *batch_dim, N // self.patch_size, self.patch_size, 3
+        vec_map = jnp.concatenate(
+            [
+                jnp.mean(
+                    rearrange(
+                        vec_map, '... (N P) V -> ... N P V', P=patch_size, V=3
+                    ),
+                    axis=-2
+                )
+                for patch_size in self.patch_size_list
+            ], axis=-2
         )
-        vec_map = jnp.mean(vec_map, axis=-2)
 
         # Compute the shared relative bias logits.
         relative_bias_logits = self.relative_bias(vec_map)
 
         # Embed the input map to have dimension (B, N // patch_size, D) and add
         # absolute positional embedding for each patch.
-        x = nn.Dense(self.emb_features)(x)
-        pos_embedding = self.param(
-            "pos_embedding",
-            nn.initializers.normal(stddev=0.02),
-            (N // self.patch_size, self.emb_features),
+        x = jnp.concatenate(
+            [nn.Dense(self.emb_features)(x) for x in x_list], axis=-2
+        )
+        assert x.shape[-1] == self.emb_features
+        pos_embedding = jnp.concatenate(
+            [
+                self.param(
+                    f"pos_embedding_{i}",
+                    nn.initializers.normal(stddev=0.02),
+                    (N // self.patch_size_list[i], self.emb_features)
+                ) for i in range(len(self.patch_size_list))
+            ], axis=-2
         )
         # Positional embedding broadcast check
         pos_broadcast = jnp.broadcast_to(pos_embedding, x.shape)
@@ -345,16 +363,42 @@ class HEALPixTransformer(nn.Module):
 
         # Decode back to patch space.
         x = nn.LayerNorm()(x)
-        x = nn.Dense(self.patch_size * C)(x)
-        # Decode shape checks
-        assert x.shape[-1] == self.patch_size * C, (
-            f"Decoder output last dim should be {self.patch_size*C}, got "
-            f"{x.shape}"
+
+        # Break up into individual patches again.
+        n_patches = [N // patch_size for patch_size in self.patch_size_list]
+        sections = np.cumsum(n_patches)[:-1].tolist()
+        x_list = jnp.split(x, sections, axis=-2)
+        x_list = [
+            nn.Dense(patch_size * C)(x)
+            for patch_size, x in zip(self.patch_size_list, x_list)
+        ]
+        for i in range(len(self.patch_size_list)):
+            assert x_list[i].shape[-2] == n_patches[i], (
+                f"x_list[{i}] shape {x_list[i].shape} must match n_patches[{i}]"
+                f" {n_patches[i]}"
+            )
+            assert x_list[i].shape[-1] == self.patch_size_list[i] * C, (
+                f"x_list[{i}] shape {x_list[i].shape} must match "
+                f"{self.patch_size_list[i]*C}"
+            )
+
+        # Average the prediction for each pixel.
+        x_list = jnp.stack(
+            [
+                rearrange(x, '... N (P C) -> ... (N P) C', P=patch_size)
+                for patch_size, x in zip(self.patch_size_list, x_list)
+            ], axis=-1
         )
-        x = x.reshape(*batch_dim, N, C)
-        assert x.shape[-2:] == (N, C), (
-            f"Final reshape to (N, C) failed, got {x.shape}"
+
+        # Modulate how we average the patches depending on time.
+        scale, shift = jnp.split(
+            nn.Dense(2 * x_list.shape[-1])(t), 2, axis=-1
         )
+        # Broadcast to match x_list shape (..., N*P, C, num_patches)
+        scale = scale[..., None, None, :]
+        shift = shift[..., None, None, :]
+        x = nn.Dense(1)((scale + 1) * x_list + shift).squeeze(axis=-1)
+
         return x
 
 

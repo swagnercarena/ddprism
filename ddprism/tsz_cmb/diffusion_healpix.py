@@ -25,21 +25,21 @@ class Denoiser(diffusion.Denoiser):
     Arguments:
         sde_model: SDE model.
         score_model: Noise conditional score network.
+        n_pixels: Number of pixels in the HEALPix grid.
         emb_features: Number of features in positional embedding of time.
     """
     score_model: nn.Module
+    n_pixels: int
     emb_features: int = 64
 
     def __call__(
-        self, xt: Array, t: Array, vec_map: Array, train: bool = True
+        self, xt: Array, t: Array, train: bool = True
     ) -> Array:
         """Call the score model and rescale for better performance.
 
         Arguments:
             xt: The noisy draws with shape (*, D).
             t: Time with shape (*)
-            vec_map: Vector map of position of each pixel.
-                Shape (*, n_pixels, 3).
             train: Train keyword passed to score model.
 
         Returns
@@ -57,6 +57,14 @@ class Denoiser(diffusion.Denoiser):
             jnp.log(sigma_t), emb_features=self.emb_features
         )
 
+        # Initialize our vec_map which must be passed in with the parameters.
+        vec_map = self.variable(
+            "variables", "vec_map",
+            lambda: jnp.ones(
+                xt.shape[:-1] + (self.n_pixels, 3)
+            )
+        )
+
         # Add extra dimension for multiplication with x features.
         c_skip = c_skip[..., None]
         c_out = c_out[..., None]
@@ -64,7 +72,7 @@ class Denoiser(diffusion.Denoiser):
 
         return (
             c_skip * xt + c_out * self.score_model(
-                c_in * xt, emb_noise, vec_map, train
+                c_in * xt, emb_noise, vec_map.value, train
             )
         )
 
@@ -132,7 +140,7 @@ class PosteriorDenoiserJoint(diffusion.PosteriorDenoiserJoint):
         return jnp.split(u, split_indices, axis=-1)
 
     def sde_x_t(
-        self, u: Array, z: Array, t: Array, vec_map: Array, index: int = None
+        self, u: Array, z: Array, t: Array, index: int = None
     ) -> Array:
         """Evolve u according to the underlying SDE.
 
@@ -141,8 +149,6 @@ class PosteriorDenoiserJoint(diffusion.PosteriorDenoiserJoint):
                 (*, sum of x_features)
             z: Random noise draws. Shape (*, sum of x_features)
             t: Time for each example.
-            vec_map: Vector map of position of each pixel.
-                Shape (*, n_pixels, 3).
             index: Optional parameter specifying which of the model to
                 use. Mainly used for Gibbs sampling.
 
@@ -152,7 +158,7 @@ class PosteriorDenoiserJoint(diffusion.PosteriorDenoiserJoint):
         x = self._split_u(u, index)
         z = self._split_u(z, index)
         sde_x_t_list = [
-            model.sde_x_t(x_split, z_split, vec_map, t) for
+            model.sde_x_t(x_split, z_split, t) for
             model, x_split, z_split in zip(
                 self.denoiser_models_idx(index), x, z
             )
@@ -161,16 +167,13 @@ class PosteriorDenoiserJoint(diffusion.PosteriorDenoiserJoint):
 
     @nn.compact
     def __call__(
-        self, ut: Array, t: Array, vec_map: Array, train: bool = False,
-        index: int = None,
+        self, ut: Array, t: Array, train: bool = False, index: int = None,
     ) -> Array:
         """Call the posterior score model and rescale for better performance.
 
         Arguments:
             ut: The noisy draws with shape (*, sum of x_features).
             t: Time with shape (*)
-            vec_map: Vector map of position of each pixel.
-                Shape (*, n_pixels, 3).
             train: Train keyword passed to denoisers.
             index: Optional parameter specifying which of the models to
                 use. Mainly used for Gibbs sampling.
@@ -223,7 +226,7 @@ class PosteriorDenoiserJoint(diffusion.PosteriorDenoiserJoint):
 
         # Return list of E[x|x_t] and VJP of E[x|x_t] for each model.
         x_exp_list, vjp_list = zip(*[
-            jax.vjp(lambda x: model(x, t, vec_map, train), xt_split) for
+            jax.vjp(lambda x: model(x, t, train), xt_split) for
             (xt_split, model) in zip(
                 xt, self.denoiser_models_idx(index)
             )

@@ -410,7 +410,7 @@ class FlatHEALPixTransformer(HEALPixTransformer):
         n_blocks: Number of transformer blocks.
         dropout_rate_block: Dropout rate for each transformer block.
         heads: Number of heads in the attention mechanism.
-        patch_size: Size of the patch to divide the input map into.
+        patch_size_list: Size of each path to build an attention path for.
         time_emb_features: Size of the embedding vector that encodes the time
             features.
         freq_features: Number of frequency features for the relative bias.

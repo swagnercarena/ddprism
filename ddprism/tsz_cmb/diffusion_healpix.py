@@ -13,7 +13,7 @@ from ddprism import diffusion
 from ddprism import linalg
 
 
-class Denoiser(diffusion.Denoiser):
+class Denoiser(diffusion._Denoiser):
     r"""Denoiser model.
 
     .. math:: f(x_t) \approx E[x | x_t]
@@ -32,6 +32,7 @@ class Denoiser(diffusion.Denoiser):
     n_pixels: int
     emb_features: int = 64
 
+    @nn.compact
     def __call__(
         self, xt: Array, t: Array, train: bool = True
     ) -> Array:
@@ -85,8 +86,6 @@ class PosteriorDenoiserJoint(diffusion.PosteriorDenoiserJoint):
     Arguments:
         denoiser_models: List of denoiser models for each source prior.
         y_features: Number of features in y space.
-        x_features: List of number of features for each source model. If None,
-            assumes all models have the same dimensionality (inferred from data).
         rtol: Tolerance to use when solving using conjugate gradient.
         maxiter: Maximum iterations when solving using conjugate gradient.
         use_dplr: If True, use DPLR representation for cov_y instead of a
@@ -95,6 +94,8 @@ class PosteriorDenoiserJoint(diffusion.PosteriorDenoiserJoint):
             conjugate gradient calculations.
         regularization: Regularization added to diagonal of linear system.
         error_threshold: Threshold for error in conjugate gradient calculations.
+        x_features: List of number of features for each source model. If None,
+            assumes all models have the same dimensionality (inferred from data).
 
     Notes:
         Can also be used as a regular posterior denoiser if only one denoiser
@@ -102,13 +103,13 @@ class PosteriorDenoiserJoint(diffusion.PosteriorDenoiserJoint):
     """
     denoiser_models: Sequence[nn.Module]
     y_features: int
-    x_features: Sequence[int]
     rtol: float = 1e-3
     maxiter: int = 1
     use_dplr: bool = False
     safe_divide: float = 1e-32
     regularization: float = 0.0
     error_threshold: Optional[float] = None
+    x_features: Optional[Sequence[int]] = None
 
     def _get_x_features(self, index: Optional[int] = None) -> Sequence[int]:
         """Return the feature dimensions for each model.
@@ -120,6 +121,10 @@ class PosteriorDenoiserJoint(diffusion.PosteriorDenoiserJoint):
         Returns:
             List of feature dimensions for each model.
         """
+        if self.x_features is None:
+            raise ValueError(
+                "x_features must be provided to PosteriorDenoiserJoint"
+            )
         if index is None:
             return self.x_features
         return [self.x_features[index]]

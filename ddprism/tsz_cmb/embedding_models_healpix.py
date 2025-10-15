@@ -74,7 +74,10 @@ class RelativeBias(nn.Module):
         """
         # Get the angular distance between all pairs of vectors.
         vec_map = vec_map / jnp.linalg.norm(vec_map, axis=-1, keepdims=True)
-        dot = jnp.einsum('...NK,...MK->...NM', vec_map, vec_map)
+
+        # Angles are very small, so will need to use stable calculation.
+        dif_mat = vec_map[..., None, :] - vec_map[..., None, :, :]
+        dot = 1.0 - 0.5 * jnp.sum(dif_mat * dif_mat, axis=-1)
         angle = jnp.arccos(jnp.clip(dot, -1.0, 1.0)) / 5e-3
 
         # Get the embedded distance between all pairs of vectors.

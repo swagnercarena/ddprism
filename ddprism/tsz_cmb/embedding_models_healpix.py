@@ -270,6 +270,10 @@ class HEALPixTransformer(nn.Module):
         self.relative_bias = RelativeBias(
             self.heads, freq_features=self.freq_features
         )
+        # Relative bias for patch averaging at the output
+        self.patch_relative_bias = RelativeBias(
+            1, freq_features=self.freq_features
+        )
 
     @nn.compact
     def __call__(
@@ -320,7 +324,7 @@ class HEALPixTransformer(nn.Module):
         ]
 
         # Set the vector of each patch to the average of the patches.
-        vec_map = jnp.concatenate(
+        vec_map_patches = jnp.concatenate(
             [
                 jnp.mean(
                     rearrange(
@@ -333,7 +337,7 @@ class HEALPixTransformer(nn.Module):
         )
 
         # Compute the shared relative bias logits.
-        relative_bias_logits = self.relative_bias(vec_map)
+        relative_bias_logits = self.relative_bias(vec_map_patches)
 
         # Embed the input map to have dimension (B, N // patch_size, D) and add
         # absolute positional embedding for each patch.
@@ -385,22 +389,37 @@ class HEALPixTransformer(nn.Module):
                 f"{self.patch_size_list[i]*C}"
             )
 
-        # Average the prediction for each pixel.
+        # Average each patch representation by all patches weighted by relative
+        # bias. This is a healpix convolutional operation for final smoothing.
+        # Split vec_map_patches into separate groups for each patch size.
+        vec_map_patches_list = jnp.split(vec_map_patches, sections, axis=-2)
+
+        # Apply relative bias weighted averaging separately for each patch size
+        # group with skip connection.
+        x_list_with_skip = []
+        for vec_patches, x_patches in zip(vec_map_patches_list, x_list):
+            # Compute relative bias for this patch size group.
+            patch_bias_logits = self.patch_relative_bias(vec_patches)
+            # patch_bias_logits has shape (..., n_patches[i], n_patches[i], 1)
+            patch_bias_logits = patch_bias_logits.squeeze(axis=-1)
+            # Apply softmax to get attention weights
+            patch_weights = nn.softmax(patch_bias_logits, axis=-1)
+            x_averaged = jnp.einsum(
+                '...NM,...MP->...NP', patch_weights, x_patches
+            )
+            # Add skip connection
+            x_list_with_skip.append(x_averaged + x_patches)
+
+        x_list = x_list_with_skip
+
+        # Weighted average of the prediction for each pixel.
         x_list = jnp.stack(
             [
                 rearrange(x, '... N (P C) -> ... (N P) C', P=patch_size)
                 for patch_size, x in zip(self.patch_size_list, x_list)
             ], axis=-1
         )
-
-        # Modulate how we average the patches depending on time.
-        scale, shift = jnp.split(
-            nn.Dense(2 * x_list.shape[-1])(t), 2, axis=-1
-        )
-        # Broadcast to match x_list shape (..., N*P, C, num_patches)
-        scale = scale[..., None, None, :]
-        shift = shift[..., None, None, :]
-        x = nn.Dense(1)((scale + 1) * x_list + shift).squeeze(axis=-1)
+        x = nn.Dense(1)(x_list).squeeze(axis=-1)
 
         return x
 

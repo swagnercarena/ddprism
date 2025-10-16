@@ -141,7 +141,7 @@ class PosteriorDenoiserJoint(diffusion.PosteriorDenoiserJoint):
             List of x vectors.
         """
         x_features = self._get_x_features(index)
-        split_indices = np.cumsum(jnp.array(x_features[:-1])).tolist()
+        split_indices = np.cumsum(x_features[:-1]).tolist()
         return jnp.split(u, split_indices, axis=-1)
 
     def sde_x_t(

@@ -12,6 +12,52 @@ import numpy as np
 PERIOD = 1e-1
 
 
+def _compact1_64(v: np.ndarray) -> np.ndarray:
+    """Compact 1 bits into 64 bits using a bitwise operation.
+
+    Arguments:
+        v: Input array of integers to compact.
+
+    Returns:
+        Compact array of integers.
+    """
+    v = v.astype(np.uint64)
+    v &= np.uint64(0x5555555555555555)
+    v = (v | (v >> 1))  & np.uint64(0x3333333333333333)
+    v = (v | (v >> 2))  & np.uint64(0x0F0F0F0F0F0F0F0F)
+    v = (v | (v >> 4))  & np.uint64(0x00FF00FF00FF00FF)
+    v = (v | (v >> 8))  & np.uint64(0x0000FFFF0000FFFF)
+    v = (v | (v >> 16)) & np.uint64(0x00000000FFFFFFFF)
+    return v
+
+
+def nest_to_xy(nside: int, ipix: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+    """Convert NEST pixel indices to XY coordinates for neighbor averaging.
+
+    Arguments:
+        nside: HEALPix nside parameter.
+        ipix: Input array of pixel indices.
+
+    Returns:
+        Tuple of X and Y coordinates.
+
+    Notes:
+        Uses uint64 for nside of 64 calculations but returns int32.
+    """
+    # Will always have power of two nside.
+    k = int(np.log2(nside))
+    ipix = ipix.astype(np.uint64)
+
+    mask = (np.uint64(1) << np.uint64(2 * k)) - np.uint64(1)
+    # Morton code within face.
+    p = ipix & mask
+
+    x_coords = _compact1_64(p)
+    y_coords = _compact1_64(p >> np.uint64(1))
+
+    return x_coords.astype(np.int32), y_coords.astype(np.int32)
+
+
 class AdaLNZeroModulation(nn.Module):
     r"""Produces (gamma,beta,alpha) for adaptive layer norm modulation (adaLN-0)
 
@@ -241,6 +287,31 @@ class HEALPixAttentionBlock(nn.Module):
 
         # Last step of adaLN-Zero modulation.
         x = x + (alpha_two * y / jnp.sqrt(1 + alpha_two ** 2))
+
+        # Do a neighbor averaging operation to avoid edge effects between
+        # patches. Ideally this would be aware of angular distance between
+        # pixels, but that's not currently implemented.
+        nside = int(np.sqrt(x.shape[-2]))
+        # Temporary 2d array for concolution.
+        x_twod = rearrange(
+            jnp.ones_like(x), '... (N M) C -> ... N M C', N=nside, M=nside
+        )
+        x_coords, y_coords = nest_to_xy(nside, np.arange(nside*nside))
+        x_twod = x_twod.at[...,x_coords,y_coords,:].set(x)
+
+        # Convolutional layers.
+        x_twod = nn.Conv(
+            x.shape[-1], kernel_size=(5,5), padding='SAME'
+        )(x_twod)
+        for i in range(4):
+            x_twod = nn.LayerNorm()(x_twod)
+            x_twod = nn.silu(x_twod)
+            x_twod = nn.Conv(
+                x.shape[-1], kernel_size=(5,5), strides=(2,2), padding='SAME'
+            )(x_twod)
+
+        # Add back to the original array.
+        x = x + x_twod[...,x_coords,y_coords,:]
 
         return x
 

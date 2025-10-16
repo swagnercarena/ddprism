@@ -1,6 +1,6 @@
 r"""Extension of the diffusion helpers for HEALPix data."""
 
-from typing import Callable, Optional, Sequence
+from typing import Optional, Sequence
 
 from flax import linen as nn
 import jax

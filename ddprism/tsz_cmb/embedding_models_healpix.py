@@ -288,31 +288,6 @@ class HEALPixAttentionBlock(nn.Module):
         # Last step of adaLN-Zero modulation.
         x = x + (alpha_two * y / jnp.sqrt(1 + alpha_two ** 2))
 
-        # Do a neighbor averaging operation to avoid edge effects between
-        # patches. Ideally this would be aware of angular distance between
-        # pixels, but that's not currently implemented.
-        nside = int(np.sqrt(x.shape[-2]))
-        # Temporary 2d array for concolution.
-        x_twod = rearrange(
-            jnp.ones_like(x), '... (N M) C -> ... N M C', N=nside, M=nside
-        )
-        x_coords, y_coords = nest_to_xy(nside, np.arange(nside*nside))
-        x_twod = x_twod.at[...,x_coords,y_coords,:].set(x)
-
-        # Convolutional layers.
-        x_twod = nn.Conv(
-            x.shape[-1], kernel_size=(5,5), padding='SAME'
-        )(x_twod)
-        for i in range(4):
-            x_twod = nn.LayerNorm()(x_twod)
-            x_twod = nn.silu(x_twod)
-            x_twod = nn.Conv(
-                x.shape[-1], kernel_size=(5,5), strides=(2,2), padding='SAME'
-            )(x_twod)
-
-        # Add back to the original array.
-        x = x + x_twod[...,x_coords,y_coords,:]
-
         return x
 
 
@@ -328,6 +303,8 @@ class HEALPixTransformer(nn.Module):
         time_emb_features: Size of the embedding vector that encodes the time
             features.
         freq_features: Number of frequency features for the relative bias.
+        n_average_layers: Number of layers of convolutional smoothing to apply
+            to final output.
     """
     emb_features: int
     n_blocks: int
@@ -336,6 +313,7 @@ class HEALPixTransformer(nn.Module):
     patch_size_list: Sequence[int]
     time_emb_features: int
     freq_features: int = 64
+    n_average_layers: int = 4
 
     def setup(self):
         self.relative_bias = RelativeBias(
@@ -492,6 +470,31 @@ class HEALPixTransformer(nn.Module):
         )
         x = nn.Dense(1)(x_list).squeeze(axis=-1)
 
+        # Do a neighbor averaging operation to avoid edge effects between
+        # patches. Ideally this would be aware of angular distance between
+        # pixels, but that's not currently implemented.
+        nside = int(np.sqrt(x.shape[-2]))
+        # Temporary 2d array for concolution.
+        x_twod = rearrange(
+            jnp.ones_like(x), '... (N M) C -> ... N M C', N=nside, M=nside
+        )
+        x_coords, y_coords = nest_to_xy(nside, np.arange(nside*nside))
+        x_twod = x_twod.at[...,x_coords,y_coords,:].set(x)
+
+        # Convolutional layers.
+        for i in range(self.n_average_layers):
+            x_twod = nn.Conv(
+                x.shape[-1], kernel_size=(5,5), strides=(2,2), padding='SAME'
+            )(x_twod)
+            x_twod = nn.LayerNorm()(x_twod)
+            x_twod = nn.silu(x_twod)
+        x_twod = nn.Conv(
+            x.shape[-1], kernel_size=(5,5), strides=(2,2), padding='SAME'
+        )(x_twod)
+
+        # Add back to the original array.
+        x = x + x_twod[...,x_coords,y_coords,:]
+
         return x
 
 
@@ -507,6 +510,8 @@ class FlatHEALPixTransformer(HEALPixTransformer):
         time_emb_features: Size of the embedding vector that encodes the time
             features.
         freq_features: Number of frequency features for the relative bias.
+        n_average_layers: Number of layers of convolutional smoothing to apply
+            to final output.
         healpix_shape: Healpix shape with the number of channels.
     """
     healpix_shape: Sequence[int] = None

@@ -303,6 +303,8 @@ class HEALPixTransformer(nn.Module):
         time_emb_features: Size of the embedding vector that encodes the time
             features.
         freq_features: Number of frequency features for the relative bias.
+        use_patch_convolution: If True, use a patch-wise convolution to average
+            the output of each patch at each scale before combining.
         n_average_layers: Number of layers of convolutional smoothing to apply
             to final output.
     """
@@ -313,6 +315,7 @@ class HEALPixTransformer(nn.Module):
     patch_size_list: Sequence[int]
     time_emb_features: int
     freq_features: int = 64
+    use_patch_convolution: bool = True
     n_average_layers: int = 4
 
     def setup(self):
@@ -443,23 +446,24 @@ class HEALPixTransformer(nn.Module):
         # Split vec_map_patches into separate groups for each patch size.
         vec_map_patches_list = jnp.split(vec_map_patches, sections, axis=-2)
 
-        # Apply relative bias weighted averaging separately for each patch size
-        # group with skip connection.
-        x_list_with_skip = []
-        for vec_patches, x_patches in zip(vec_map_patches_list, x_list):
-            # Compute relative bias for this patch size group.
-            patch_bias_logits = self.patch_relative_bias(vec_patches)
-            # patch_bias_logits has shape (..., n_patches[i], n_patches[i], 1)
-            patch_bias_logits = patch_bias_logits.squeeze(axis=-1)
-            # Apply softmax to get attention weights
-            patch_weights = nn.softmax(patch_bias_logits, axis=-1)
-            x_averaged = jnp.einsum(
-                '...NM,...MP->...NP', patch_weights, x_patches
-            )
-            # Add skip connection
-            x_list_with_skip.append(x_averaged + x_patches)
+        if self.use_patch_convolution:
+            # Apply relative bias weighted averaging separately for each patch
+            # size group with skip connection.
+            x_list_with_skip = []
+            for vec_patches, x_patches in zip(vec_map_patches_list, x_list):
+                # Compute relative bias for this patch size group.
+                patch_bias_logits = self.patch_relative_bias(vec_patches)
+                # patch_bias_logits has shape (..., n_patches[i], n_patches[i], 1)
+                patch_bias_logits = patch_bias_logits.squeeze(axis=-1)
+                # Apply softmax to get attention weights
+                patch_weights = nn.softmax(patch_bias_logits, axis=-1)
+                x_averaged = jnp.einsum(
+                    '...NM,...MP->...NP', patch_weights, x_patches
+                )
+                # Add skip connection
+                x_list_with_skip.append(x_averaged + x_patches)
 
-        x_list = x_list_with_skip
+            x_list = x_list_with_skip
 
         # Weighted average of the prediction for each pixel.
         x_list = jnp.stack(
@@ -470,30 +474,32 @@ class HEALPixTransformer(nn.Module):
         )
         x = nn.Dense(1)(x_list).squeeze(axis=-1)
 
-        # Do a neighbor averaging operation to avoid edge effects between
-        # patches. Ideally this would be aware of angular distance between
-        # pixels, but that's not currently implemented.
-        nside = int(np.sqrt(x.shape[-2]))
-        # Temporary 2d array for concolution.
-        x_twod = rearrange(
-            jnp.ones_like(x), '... (N M) C -> ... N M C', N=nside, M=nside
-        )
-        x_coords, y_coords = nest_to_xy(nside, np.arange(nside*nside))
-        x_twod = x_twod.at[...,x_coords,y_coords,:].set(x)
+        if self.n_average_layers > 0:
+            # Do a neighbor averaging operation to avoid edge effects between
+            # patches. Ideally this would be aware of angular distance between
+            # pixels, but that's not currently implemented.
+            nside = int(np.sqrt(x.shape[-2]))
+            # Temporary 2d array for concolution.
+            x_twod = rearrange(
+                jnp.ones_like(x), '... (N M) C -> ... N M C', N=nside, M=nside
+            )
+            x_coords, y_coords = nest_to_xy(nside, np.arange(nside*nside))
+            x_twod = x_twod.at[...,x_coords,y_coords,:].set(x)
 
-        # Convolutional layers.
-        for i in range(self.n_average_layers):
+            # Convolutional layers.
+            for i in range(self.n_average_layers):
+                x_twod = nn.Conv(
+                    x.shape[-1], kernel_size=(5,5), strides=(2,2),
+                    padding='SAME'
+                )(x_twod)
+                x_twod = nn.LayerNorm()(x_twod)
+                x_twod = nn.silu(x_twod)
             x_twod = nn.Conv(
                 x.shape[-1], kernel_size=(5,5), strides=(2,2), padding='SAME'
             )(x_twod)
-            x_twod = nn.LayerNorm()(x_twod)
-            x_twod = nn.silu(x_twod)
-        x_twod = nn.Conv(
-            x.shape[-1], kernel_size=(5,5), strides=(2,2), padding='SAME'
-        )(x_twod)
 
-        # Add back to the original array.
-        x = x + x_twod[...,x_coords,y_coords,:]
+            # Add back to the original array.
+            x = x + x_twod[...,x_coords,y_coords,:]
 
         return x
 

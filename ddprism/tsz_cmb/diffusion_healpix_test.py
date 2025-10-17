@@ -21,7 +21,7 @@ class DiffusionHEALPixTests(chex.TestCase):
         rng = jax.random.PRNGKey(0)
         rng_keys = jax.random.split(rng, 3)
 
-        n_pixels = 12 * 8 * 8 # NSIDE=8
+        n_pixels = 8 * 8 # NSIDE=8
         channels = 2
         features = n_pixels * channels
 
@@ -98,7 +98,7 @@ class PosteriorDenoiserJointHEALPixTests(chex.TestCase):
         rng = jax.random.PRNGKey(0)
         rng_keys = jax.random.split(rng, 3)
 
-        n_pixels = 12 * 8 * 8 # NSIDE=8
+        n_pixels = 8 * 8 # NSIDE=8
         channels = [1, 2]
         x_features = [n_pixels * c for c in channels]
 

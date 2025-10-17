@@ -481,7 +481,7 @@ class HEALPixTransformer(nn.Module):
             nside = int(np.sqrt(x.shape[-2]))
             # Temporary 2d array for concolution.
             x_twod = rearrange(
-                jnp.ones_like(x), '... (N M) C -> ... N M C', N=nside, M=nside
+                jnp.zeros_like(x), '... (N M) C -> ... N M C', N=nside, M=nside
             )
             x_coords, y_coords = nest_to_xy(nside, np.arange(nside*nside))
             x_twod = x_twod.at[...,x_coords,y_coords,:].set(x)
@@ -489,14 +489,20 @@ class HEALPixTransformer(nn.Module):
             # Convolutional layers.
             for i in range(self.n_average_layers):
                 x_twod = nn.Conv(
-                    x.shape[-1], kernel_size=(5,5), strides=(2,2),
+                    x.shape[-1], kernel_size=(5,5), strides=(1,1),
                     padding='SAME'
                 )(x_twod)
                 x_twod = nn.LayerNorm()(x_twod)
                 x_twod = nn.silu(x_twod)
             x_twod = nn.Conv(
-                x.shape[-1], kernel_size=(5,5), strides=(2,2), padding='SAME'
+                x.shape[-1], kernel_size=(5,5), strides=(1,1), padding='SAME'
             )(x_twod)
+
+            # Verify spatial dimensions haven't been reduced.
+            assert x_twod.shape[-3] == nside and x_twod.shape[-2] == nside, (
+                f"x_twod spatial dimensions must remain {nside}x{nside}, "
+                f"got {x_twod.shape[-3]}x{x_twod.shape[-2]}"
+            )
 
             # Add back to the original array.
             x = x + x_twod[...,x_coords,y_coords,:]

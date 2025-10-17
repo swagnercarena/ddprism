@@ -2,13 +2,10 @@
 
 from absl.testing import absltest
 import chex
-from flax import linen as nn
 import jax
-from jax import Array
 import jax.numpy as jnp
 
 from ddprism import diffusion
-from ddprism import linalg
 from ddprism.tsz_cmb import diffusion_healpix, embedding_models_healpix
 
 

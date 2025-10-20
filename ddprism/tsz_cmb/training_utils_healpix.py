@@ -19,10 +19,8 @@ def create_denoiser_transformer(config, healpix_shape):
         dropout_rate_block=config.dropout_rate_block, heads=config.heads,
         patch_size_list=config.patch_size_list,
         time_emb_features=config.time_emb_features,
-        n_average_layers=config.n_average_layers.get('value', 0),
-        use_patch_convolution=config.n_average_layers.get(
-            'use_patch_convolution', True
-        ),
+        n_average_layers=config.get('n_average_layers', 0),
+        use_patch_convolution=config.get('use_patch_convolution', True),
         healpix_shape=healpix_shape
     )
 

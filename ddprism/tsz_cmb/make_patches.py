@@ -8,6 +8,10 @@ import numpy as np
 import healpy as hp
 from tqdm import tqdm
 
+
+SEED = 100
+
+
 def ang2diamond(
     nside: int, theta: np.ndarray, phi: np.ndarray, nest: bool = True
 ) -> np.ndarray:
@@ -403,6 +407,7 @@ def main():
 
     if random_pos:
         # Assign completely random (isotropic) positions of correct shape
+        np.random.seed(SEED)
         halo_pos = np.random.normal(size=(len(halo_pos), 3))
         halo_pos /= np.linalg.norm(halo_pos, axis=1, keepdims=True)
 

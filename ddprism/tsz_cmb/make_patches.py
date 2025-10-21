@@ -1,6 +1,4 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-
+"""Functions for making patches around halos."""
 import os
 import argparse
 from functools import lru_cache
@@ -10,11 +8,6 @@ import numpy as np
 import healpy as hp
 import matplotlib.pyplot as plt
 from mpi4py import MPI
-
-from utils import xyz_to_lonlat
-
-
-#####################################
 
 def ang2diamond(
     nside: int, theta: np.ndarray, phi: np.ndarray, nest: bool = True
@@ -45,7 +38,7 @@ def ang2diamond(
 
 
 def grow_diamond(
-    nside: int, theta_deg: np.ndarray, phi_deg: np.ndarray, num_pixels: int,
+    nside: int, theta: np.ndarray, phi: np.ndarray, num_pixels: int,
     nest: bool = True
 ) -> np.ndarray:
     """
@@ -61,8 +54,8 @@ def grow_diamond(
 
     Arguments:
         nside: HEALPix nside.
-        theta_deg: Sky position in degrees. Shape (N,).
-        phi_deg: Sky position in degrees. Shape (N,).
+        theta: Sky position in radians. Shape (N,).
+        phi: Sky position in radians. Shape (N,).
         num_pixels: Desired diamond size (num_pixels x num_pixels). Must be
             even and ≥ 4.
         nest: Pixel ordering of the input map AND returned pixel IDs. Default:
@@ -78,7 +71,7 @@ def grow_diamond(
 
     steps = (num_pixels - 2) // 2  # number of expansion steps
 
-    neigh = ang2diamond(nside, theta_deg, phi_deg, nest=nest).flatten()
+    neigh = ang2diamond(nside, theta, phi, nest=nest).flatten()
     pixel_ids = set(neigh.tolist())
 
     # Add neighbors for the required number of steps.
@@ -93,24 +86,18 @@ def grow_diamond(
 
 
 @lru_cache(maxsize=256)
-def get_ring_pixels(nside: int, num_pixels: int) -> np.ndarray:
+def get_ring_pixels(nside: int, total_pixels: int) -> np.ndarray:
     """
     Get the pixel indices for a nested HEALPix map of given size.
 
     Arguments:
         nside: HEALPix nside.
-        num_pixels: Desired diamond size (num_pixels x num_pixels). Must be
-            even and ≥ 4.
+        total_pixels: Desired total number of pixels (total_pixels).
 
     Returns:
-        Pixel indices. Shape (num_pixels ** 2,).
+        Pixel indices. Shape (total_pixels,).
     """
-    # Check valid size.
-    if num_pixels < 4 or (num_pixels % 2):
-        raise ValueError("Npix must be even and ≥ 4 (e.g., 4, 6, 8, ...).")
-
-    # Get the pixel indices for the ring of a given size.
-    return hp.nest2ring(nside, np.arange(num_pixels ** 2))
+    return np.sort(hp.nest2ring(nside, np.arange(total_pixels)))
 
 
 def reorder_diamond(nside: int, picked: np.ndarray) -> np.ndarray:
@@ -124,143 +111,179 @@ def reorder_diamond(nside: int, picked: np.ndarray) -> np.ndarray:
     Returns:
         Reordered pixel indices.
     """
-    parallel = hp.nest2ring(nside, np.arange(len(picked)))
+    ring_base = get_ring_pixels(nside, len(picked))
+    ring_picked = hp.nest2ring(nside, picked)
 
-    return fake_map, pixel_id
+    # This is the order I need to put picked in so that it ring_picked is sorted
+    picked_ring_map = np.argsort(ring_picked)
+    picked_sorted = picked[picked_ring_map]
+    map_array = np.zeros_like(picked_sorted)
+
+    # The sorted ring maps to these pixels in the original space.
+    map_array[hp.ring2nest(nside, ring_base)] = picked_sorted
+
+    return map_array
 
 
-def plot_diamond(nside, lon, lat, picked, pixel_id, m, nest=False):
+# def plot_diamond(nside, lon, lat, picked, pixel_id, m, nest=False):
+#     """
+#     Plot the picked pixels in various views.
+#     (gnom, cart) X (before and after reordering to nested)
+
+#     Args:
+#         nside (int): HEALPix nside
+#         lon (float): longitude of the center in degrees
+#         lat (float): latitude of the center in degrees
+#         picked (array): array of picked pixel indices from the diamond search
+#         m (array): map
+#         pixel_id (int): central pixel id for plotting
+#     """
+#     # build a masked map with only the picked pixels visible
+#     M = np.full(hp.nside2npix(nside), hp.UNSEEN, dtype=float)
+#     M[picked] = m[picked]
+
+#     # reorder the picked pixels to be in a nested structure
+#     fake_map, pixel_id = reorder_diamond(nside, picked, M, nest=nest)
+
+#     # quick gnomonic cutout
+#     hp.gnomview(
+#         M, nest=nest, rot=(lon, lat, 0),
+#         xsize=xsize*4, reso=reso,  # tweak as you like (pixels across, arcmin/pixel)
+#         notext=True, cbar=True, title="Picked pixels (gnomview)"
+#     )
+#     plt.show()
+#     # mollview
+#     # hp.mollview(M, nest=False, title="Picked pixels — full-sky (Mollweide)",
+#     #         notext=True, cbar=True)
+#     # hp.graticule()
+#     # hp.projscatter(lon, lat, lonlat=True, s=6, color="k")
+#     # plt.show()
+
+#     # -------- Plate Carrée / Cartesian (flattened) with auto-zoom --------
+#     # small padding based on pixel size
+#     span_deg = (xsize * reso) / 60.0
+#     half = 0.5 * span_deg
+#     pad_fac = 1
+
+#     _lon = lon - 360 if lon > 180 else lon   # cartview wants -180 to 180
+
+#     lonra = [_lon - half * pad_fac, _lon + half * pad_fac]
+#     latra = [lat - half * pad_fac, lat + half * pad_fac]
+
+#     hp.cartview(M, nest=nest,
+#                 notext=True, cbar=False, lonra=lonra, latra=latra,
+#                 hold=1)
+
+#     print(lonra, latra, _lon, lat)
+#     hp.projplot(_lon, lat, lonlat=True, marker="x", color="k")
+#     plt.show()
+
+#     # -------- Reorder to nested plots --------
+#     theta_rad, phi_rad = hp.pix2ang(nside, pixel_id)
+#     lon_deg, lat_deg = hp.pix2ang(nside, pixel_id, lonlat=True)
+
+#     span_deg = (xsize * reso) / 60.0
+#     half = 0.5 * span_deg
+#     pad_fac = 1
+
+#     _lon_deg = lon_deg - 360 if lon_deg > 180 else lon_deg   # cartview wants -180 to 180
+
+#     lonra = [_lon_deg - half * pad_fac, _lon_deg + half * pad_fac]
+#     latra = [lat_deg - half * pad_fac, lat_deg + half * pad_fac]
+
+
+#     hp.gnomview(
+#             fake_map, nest=False, rot=(lon_deg, lat_deg, 0),
+#             xsize=xsize*4, reso=reso,  # tweak as you like (pixels across, arcmin/pixel)
+#         )
+
+#     plt.show()
+
+#     hp.cartview(fake_map, nest=False,
+#                     notext=True, cbar=False, lonra=lonra, latra=latra,
+#                     hold=1)
+
+#     plt.show()
+
+
+def xyz_to_lonlat(xyz):
+    """Convert Cartesian coordinates to longitude and latitude in degrees.
+
+    Arguments:
+        xyz: Cartesian coordinates. Shape (N, 3).
+
+    Returns:
+        Tuple of longitude and latitude. Shape (N,).
     """
-    Plot the picked pixels in various views.
-    (gnom, cart) X (before and after reordering to nested)
+    x, y, z = xyz[..., 0], xyz[..., 1], xyz[..., 2]
+
+    ra = np.arctan2(y, x) % (2*np.pi) # wrap to [0, 2π)
+    dec = np.arcsin(z / np.sqrt(x**2 + y**2 + z**2)) # [-π/2, π/2]
+
+    lon = np.degrees(ra)
+    lat = np.degrees(dec)
+
+    return lon, lat
+
+
+def process_patch(nside: int, pos: np.ndarray, num_pixels: int) -> np.ndarray:
+    """
+    Get the patch indices for a diamond around (lon, lat)
 
     Args:
-        nside (int): HEALPix nside
-        lon (float): longitude of the center in degrees
-        lat (float): latitude of the center in degrees
-        picked (array): array of picked pixel indices from the diamond search
-        m (array): map
-        pixel_id (int): central pixel id for plotting
+        nside: HEALPix nside.
+        pos (float): XYZ position of the cluster shape (3,)
+        num_pixels: Size of the diamond (num_pixels x num_pixels). Must be
+            even and ≥ 4.
+        nest: Pixel ordering of the returned pixel IDs. Default:
+            True.
+
+    Returns:
+        Pixel indices at nside in the diamond. Shape (num_pixels**2,).
     """
-    # build a masked map with only the picked pixels visible
-    M = np.full(hp.nside2npix(nside), hp.UNSEEN, dtype=float)
-    M[picked] = m[picked]
-
-    # reorder the picked pixels to be in a nested structure
-    fake_map, pixel_id = reorder_diamond(nside, picked, M, nest=nest)
-
-    # quick gnomonic cutout
-    hp.gnomview(
-        M, nest=nest, rot=(lon, lat, 0),
-        xsize=xsize*4, reso=reso,  # tweak as you like (pixels across, arcmin/pixel)
-        notext=True, cbar=True, title="Picked pixels (gnomview)"
-    )
-    plt.show()
-    # mollview
-    # hp.mollview(M, nest=False, title="Picked pixels — full-sky (Mollweide)",
-    #         notext=True, cbar=True)
-    # hp.graticule()
-    # hp.projscatter(lon, lat, lonlat=True, s=6, color="k")
-    # plt.show()
-
-    # -------- Plate Carrée / Cartesian (flattened) with auto-zoom --------
-    # small padding based on pixel size
-    span_deg = (xsize * reso) / 60.0
-    half = 0.5 * span_deg
-    pad_fac = 1
-
-    _lon = lon - 360 if lon > 180 else lon   # cartview wants -180 to 180
-
-    lonra = [_lon - half * pad_fac, _lon + half * pad_fac]
-    latra = [lat - half * pad_fac, lat + half * pad_fac]
-
-    hp.cartview(M, nest=nest,
-                notext=True, cbar=False, lonra=lonra, latra=latra,
-                hold=1)
-
-    print(lonra, latra, _lon, lat)
-    hp.projplot(_lon, lat, lonlat=True, marker="x", color="k")
-    plt.show()
-
-    # -------- Reorder to nested plots --------
-    theta_rad, phi_rad = hp.pix2ang(nside, pixel_id)
-    lon_deg, lat_deg = hp.pix2ang(nside, pixel_id, lonlat=True)
-
-    span_deg = (xsize * reso) / 60.0
-    half = 0.5 * span_deg
-    pad_fac = 1
-
-    _lon_deg = lon_deg - 360 if lon_deg > 180 else lon_deg   # cartview wants -180 to 180
-
-    lonra = [_lon_deg - half * pad_fac, _lon_deg + half * pad_fac]
-    latra = [lat_deg - half * pad_fac, lat_deg + half * pad_fac]
-
-
-    hp.gnomview(
-            fake_map, nest=False, rot=(lon_deg, lat_deg, 0),
-            xsize=xsize*4, reso=reso,  # tweak as you like (pixels across, arcmin/pixel)
-        )
-
-    plt.show()
-
-    hp.cartview(fake_map, nest=False,
-                    notext=True, cbar=False, lonra=lonra, latra=latra,
-                    hold=1)
-
-    plt.show()
-
-###################
-
-def process_patch(nside, pos, Npix, nest=False):
-    """
-    Process a patch around (lon, lat) into a Npix x Npix diamond.
-    This includes growing the diamond, building the masked map,
-    reordering to nested, and plotting.
-
-    Args:
-        m: the map being processed
-        pos (float): xyz position of the cluster shape (3,)
-        Npix: size of diamond
-
-        nest (bool): whether the input map is in nested ordering (default: False)
-        plot (bool): whether to plot the results (default: False)
-    """
-
-    assert(nest==False)  # only RING input supported for now
-
     lon, lat = xyz_to_lonlat(pos)
 
-    theta = np.radians(90 - lat)
+    theta = np.radians(90.0 - lat)
     phi = np.radians(lon)
 
-    picked = grow_diamond(nside, theta, phi, Npix, nest=nest)
+    picked = grow_diamond(nside, theta, phi, num_pixels)
 
     return picked
 
-#######################
+    # generate_patches(
+    #     halo_pos, halo_mass, halo_id, freqs,
+    #     num_pixels=num_pixels, outdir=outdir, dataset_name=dataset_name,
+    #     random_pos=random_pos, noise=noise, fwhm=fwhm
+    # )
 
-def main(halo_pos, halo_mass, noise=0, fwhm=0, outdir="./patches_out", dataset_name="blah", random_pos=False):
+def generate_patches(
+    halo_pos: np.ndarray, halo_mass: np.ndarray, halo_id: np.ndarray,
+    freqs: list[int], num_pixels: int, outdir: str, dataset_name: str,
+    noise: float = 0.0, fwhm: float = 0.0
+):
+    """Generate patches around halos.
+
+    Arguments:
+        halo_pos: XYZ positions of the halos. Shape (N, 3).
+        halo_mass: Masses of the halos. Shape (N,).
+        halo_id: IDs of the halos. Shape (N,).
+        freqs: Frequencies of the maps.
+        num_pixels: Size of the diamond.
+        outdir: Output directory.
+        dataset_name: Name of the dataset.
+        random_pos: If True, use random positions instead of halo positions.
+        noise: Noise level.
+        fwhm: FWHM of the beam.
+    """
     comm = MPI.COMM_WORLD
     rank, size = comm.rank, comm.size
 
-    if rank == 0:
-        os.makedirs(outdir, exist_ok=True)
-
-    # load maps
-    f_map = mother + f'final/{profile_str}/{dataset_name}_s{seed}_f%s.fits'
-
-    if fwhm > 0 and noise > 0:
-        f_map = mother + f'final/{profile_str}/{dataset_name}_noise{noise:.0f}_s{seed}_f%s_fwhm{fwhm:.0f}.fits'
-    elif fwhm > 0 and noise == 0:
-        f_map = mother + f'final/{profile_str}/{dataset_name}_s{seed}_f%s_fwhm{fwhm:.0f}.fits'
-    else:
-        f_map = mother + f'final/{profile_str}/{dataset_name}_s{seed}_f%s.fits'
-
-    maps = np.empty((len(freqs), hp.nside2npix(nside)), dtype=np.float32)   # store all maps in memory for easy reading out later
+    # Load maps.
+    maps = []
     for i, f in enumerate(freqs):
-        maps[i] = hp.read_map(f_map % f, dtype=np.float32, memmap=False)
-
-    assert(nside == hp.get_nside(maps[0]))
+        maps.append(hp.read_map(f_map % f, dtype=np.float32, memmap=False))
+    nside = hp.get_nside(maps[0])
+    maps = np.stack(maps, axis=-1))
 
     # Split work (round-robin so all ranks get similar count)
     N = len(halo_pos)
@@ -334,70 +357,100 @@ def main(halo_pos, halo_mass, noise=0, fwhm=0, outdir="./patches_out", dataset_n
     if rank == 0:
         print("done writing shards ->", outdir)
 
-if __name__ == "__main__":
-    # Toggle gzip by setting compress=True if disk is tight (slower writes).
-
-    # argarse
-    # make  into arg
+def main():
+    # Parse arguments.
     parser = argparse.ArgumentParser(description="Make patches around halos.")
-    parser.add_argument("--profile_str", type=str, default="b16", help="Profile string (b16, b16g7, b16g7rel, default: b16)")
-    parser.add_argument("--dataset_name", type=str, default="dT_tsz", help="Name of the dataset (default: dT_tsz)")
-    parser.add_argument("--random_pos", action="store_true", help="Use random positions instead of halo positions.")
-    parser.add_argument("--noise", type=float, default=0, help="Add this noise in uK to each pixel.")
-    parser.add_argument("--fwhm", type=float, default=2, help="Load maps with this fwhm beam.")
+    parser.add_argument(
+        "--profile_str", type=str, default="b16",
+        help="Profile string (b16, b16g7, b16g7rel, default: b16)"
+    )
+    parser.add_argument(
+        "--dataset_name", type=str, default="dT_tsz",
+        help="Name of the dataset (default: dT_tsz)"
+    )
+    parser.add_argument(
+        "--random_pos", action="store_true",
+        help="Use random positions instead of halo positions."
+    )
+    parser.add_argument(
+        "--noise", type=float, default=0,
+        help="Add this noise in uK to each pixel."
+    )
+    parser.add_argument(
+        "--fwhm", type=float, default=2, help="Load maps with this fwhm beam."
+    )
+    parser.add_argument(
+        "--seed", type=int, default=100, help="Seed underlying simulation."
+    )
+    parser.add_argument(
+        "--numpixels", type=int, default=64,
+        help="Size of the diamond (num_pixels x num_pixels)."
+    )
     args = parser.parse_args()
 
     profile_str = args.profile_str
     dataset_name = args.dataset_name
     random_pos = args.random_pos
     noise = args.noise
-
-    # TODO BEAM 1.4' ?
-
-     ### INPUT ###########
     fwhm = args.fwhm
+    seed = args.seed
+    base_dir = '/mnt/home/abayer/ceph/fastpm/halfdome/oneweek/'
+    num_pixels = args.numpixels
 
-    ### INPUT ##########
-    seed = 100
-    mother = '/mnt/home/abayer/ceph/fastpm/halfdome/oneweek/'
-    Npix = 64  # diamond size of patch
-    nside = 8192   # FIXME assumed can change later
-
-    outdir =  f'/mnt/ceph/users/abayer/fastpm/halfdome/oneweek/final/{profile_str}/patches/'   # FIXME change
+    # Setup output directory.
+    outdir =  os.path.join(base_dir, 'final', profile_str, 'patches')
     os.makedirs(outdir, exist_ok=True)
 
-    #### GLOBALS ############
-
+    # TODO: Hardcoded frequencies.
     freqs = [93, 143, 353]
 
-    f_halos = f'/mnt/home/abayer/ceph/fastpm/halfdome/stampede2_3750Mpch_6144cube/final_res/halos/lightcone_{seed}.hdf5'
-
+    # Load halos.
+    f_halos = (
+        '/mnt/home/abayer/ceph/fastpm/halfdome/stampede2_3750Mpch_6144cube' +
+        f'/final_res/halos/lightcone_{seed}.hdf5'
+    )
     with h5py.File(f_halos, "r") as f:
         halo_pos = f['Position'][:]
         halo_mass = f['halo_mass_m200c'][:]
 
-    # apply selection (mass only for now)
+    # Apply selection (mass only for now)
     mass_cut = 2e14
     mask = halo_mass > mass_cut
     halo_pos = halo_pos[mask]
     halo_mass = halo_mass[mask]
 
-    # sort by mass and define new id for easy debugging
+    # Sort by mass and define new id.
     asort = np.argsort(halo_mass)[::-1]
     halo_pos = halo_pos[asort]
     halo_mass = halo_mass[asort]
     halo_id = np.arange(len(halo_mass))
 
-    # FIXME remove just debugging
-    # halo_pos = halo_pos[:100]
-    # halo_mass = halo_mass[:100]
-    # halo_id = halo_id[:100]
-
     if random_pos:
-        # assign completely random (isotropic) positions of correct shape
+        # Assign completely random (isotropic) positions of correct shape
         halo_pos = np.random.normal(size=(len(halo_pos), 3))
         halo_pos /= np.linalg.norm(halo_pos, axis=1, keepdims=True)
 
-    main(halo_pos, halo_mass, outdir=outdir, dataset_name=dataset_name, random_pos=random_pos, noise=noise)
+    # Get the dataset name to use.
+    if fwhm > 0 and noise > 0:
+        dataset_name = (
+            base_dir + f'final/{profile_str}/{dataset_name}_noise{noise:.0f}'
+            + f'_s{seed}_f%s_fwhm{fwhm:.0f}.fits'
+        )
+    elif fwhm > 0 and noise == 0:
+        dataset_name = (
+            base_dir + f'final/{profile_str}/{dataset_name}_s{seed}' +
+            f'_f%s_fwhm{fwhm:.0f}.fits'
+        )
+    else:
+        dataset_name = (
+            base_dir + f'final/{profile_str}/{dataset_name}_s{seed}_f%s.fits'
+        )
+    # Generate patches with noise and smoothing.
+    generate_patches(
+        halo_pos, halo_mass, halo_id, freqs,
+        num_pixels=num_pixels, outdir=outdir, dataset_name=dataset_name,
+        random_pos=random_pos, noise=noise, fwhm=fwhm
+    )
 
-    main(halo_pos, halo_mass, noise=noise, fwhm=fwhm, outdir=outdir, dataset_name=dataset_name, random_pos=random_pos)
+if __name__ == "__main__":
+    main()

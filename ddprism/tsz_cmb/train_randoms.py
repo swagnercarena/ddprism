@@ -16,11 +16,14 @@ from tqdm import tqdm
 import wandb
 
 from ddprism import diffusion, training_utils, utils
-from ddprism.tsz_cmb import training_utils_healpix
+from ddprism.tsz_cmb import load_datasets, training_utils_healpix
 
 FLAGS = flags.FLAGS
 flags.DEFINE_string('workdir', None, 'working directory.')
 flags.DEFINE_string('randoms_path', None, 'path to randoms dataset.')
+flags.DEFINE_string(
+    'randoms_no_noise_path', None, 'path to randoms dataset without noise.'
+)
 config_flags.DEFINE_config_file(
     'config', None, 'File path to the training configuration.',
 )
@@ -110,6 +113,7 @@ def main(_):
     config = FLAGS.config
     workdir = FLAGS.workdir
     randoms_path = FLAGS.randoms_path
+    randoms_no_noise_path = FLAGS.randoms_no_noise_path
     rng = jax.random.PRNGKey(config.rng_key)
     os.makedirs(workdir, exist_ok=True)
 
@@ -132,22 +136,17 @@ def main(_):
         options=checkpoint_options
     )
 
-    # Read our full dataset to cpu.
-    rng_dataset, rng_comp, rng = jax.random.split(rng, 3)
-
     # Get our observations, mixing matrix, and covariance, with the
     # later only having batch size of the sampling_batch_size.
-    # TODO: Implement this. Assumed dimensions are
-    # healpix_features = healpix_shape[1] * healpix_shape[0],
-    # (N, pmap, sample_batch_size, healpix_features),
-    # (N, pmap, sample_batch_size, healpix_shape[0], 3),
-    # (pmap, sample_batch_size, healpix_features, healpix_features),
-    # (pmap, sample_batch_size, healpix_features) in DPLR format.
-    rand_obs, vec_map, A_mat, cov_y = None, None, None, None
+    rand_obs, vec_map, A_mat, cov_y = load_datasets.load_randoms(
+        config, randoms_path
+    )
     vec_map_flat = rearrange(vec_map, 'B P S N V -> (B P S) N V')
 
     # TODO: Load the true signal for metrics and flatten for metrics.
-    rand_no_noise, _, _, _ = None, None, None, None
+    rand_no_noise, _, _, _ = load_datasets.load_randoms(
+        config, randoms_no_noise_path
+    )
     rand_no_noise = rearrange(rand_no_noise, 'B P S N V -> (B P S) (N V)')
 
     # Set dimension for posterior sampling.

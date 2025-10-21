@@ -8,12 +8,13 @@ def get_config():
     config.rng_key = 0
 
     # Parameters for dataset generation
+    config.n_train = 32_768
     config.map_norm = 500.0
 
     # Parameters for the Denoisers.
     config.sde = ConfigDict({'a': 1e-4, 'b': 1e2})
     config.emb_features = 512
-    config.n_blocks = 12
+    config.n_blocks = 8
     config.dropout_rate_block = [0.1] * config.n_blocks
     config.heads = 8
     config.patch_size_list = [64 ** 2, 32 ** 2, 16 ** 2, 8 ** 2]
@@ -30,7 +31,7 @@ def get_config():
 
     # Training parameters.
     config.lr_init_val = 1e-3
-    config.epochs = 8192
+    config.epochs = 16_384
     config.use_dynamic = False
     config.em_laps = 64
     config.gaussian_em_laps = 32
@@ -68,6 +69,6 @@ def get_config():
             'clip_method': 'none'
         }
     )
-    config.sample_batch_size = 8
+    config.sample_batch_size = 64
 
     return config

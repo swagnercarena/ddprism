@@ -37,7 +37,7 @@ def get_config():
     config.em_laps = 64
     config.gaussian_em_laps = 4
     config.batch_size = 128
-    config.ema_decay = 0.999
+    config.ema_decay = 0.995
     config.grad_clip_norm = 1.0
     config.optimizer = ConfigDict({
         'type': 'adam',
@@ -71,5 +71,10 @@ def get_config():
         }
     )
     config.sample_batch_size = 64
+
+    # wandb parameters.
+    config.wandb_kwargs = ConfigDict(
+        {'project': 'mvss-sz', 'mode': 'online', 'run_name': None}
+    )
 
     return config

@@ -8,7 +8,7 @@ from flax import jax_utils
 from flax.training import orbax_utils, train_state
 import jax
 import jax.numpy as jnp
-from ml_collections import config_flags
+from ml_collections import config_flags, ConfigDict
 from orbax.checkpoint import CheckpointManager, CheckpointManagerOptions
 from orbax.checkpoint import PyTreeCheckpointer
 import optax
@@ -259,9 +259,11 @@ def main(_):
         # Get the statistics of the separate grass sample.
         rng_ppca, rng = jax.random.split(rng)
         sz_mean, sz_cov = utils.ppca(rng_ppca, x_post[1], rank=2)
-        post_state_params['denoiser_models_1']['mu_x'] = sz_mean
-        post_state_params['denoiser_models_1']['cov_x'] = sz_cov
-        post_state_params = jax_utils.replicate(post_state_params)
+        post_state_params_single = jax_utils.unreplicate(post_state_params)
+        post_state_params_single['denoiser_models_1']['mu_x'] = sz_mean
+        post_state_params_single['denoiser_models_1']['cov_x'] = sz_cov
+        post_state_params = jax_utils.replicate(post_state_params_single)
+        del post_state_params_single
 
     metrics_dict = compute_metrics_for_samples(x_post[1], sz_no_noise)
     wandb.log(metrics_dict, commit=False)

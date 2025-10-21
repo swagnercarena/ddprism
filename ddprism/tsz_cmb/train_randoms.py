@@ -147,10 +147,11 @@ def main(_):
     rand_no_noise, _, _, _ = load_datasets.load_randoms(
         config, randoms_no_noise_path
     )
-    rand_no_noise = rearrange(rand_no_noise, 'B P S N V -> (B P S) (N V)')
+    rand_no_noise = rearrange(rand_no_noise, 'B P S (NC) -> (B P S) (NC)')
 
     # Set dimension for posterior sampling.
-    healpix_shapes = [(rand_no_noise.shape[-2], rand_no_noise.shape[-1])]
+    # TODO: Hardcoded!
+    healpix_shapes = [(rand_obs.shape[-1] // 3, 3)]
     feat_dim = rand_obs.shape[-1]
 
     # Initialize our Gaussian state.

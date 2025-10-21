@@ -9,7 +9,8 @@ def get_config():
 
     # Parameters for dataset generation
     config.n_train = 32_768
-    config.map_norm = 500.0
+    config.map_norm = 2000.0
+    config.data_max = 1.0
 
     # Parameters for the Denoisers.
     config.sde = ConfigDict({'a': 1e-4, 'b': 1e2})
@@ -34,7 +35,7 @@ def get_config():
     config.epochs = 16_384
     config.use_dynamic = False
     config.em_laps = 64
-    config.gaussian_em_laps = 32
+    config.gaussian_em_laps = 4
     config.batch_size = 128
     config.ema_decay = 0.999
     config.grad_clip_norm = 1.0

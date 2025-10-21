@@ -23,6 +23,7 @@ def load_randoms(
         S=config.sample_batch_size
     )
     rand_obs = rand_obs / config.map_norm
+    rand_obs = jnp.clip(rand_obs, -config.data_max, config.data_max)
     rand_obs = rearrange(rand_obs, '... N C -> ... (N C)')
 
     vec_map = rearrange(

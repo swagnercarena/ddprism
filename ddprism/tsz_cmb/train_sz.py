@@ -197,6 +197,7 @@ def main(_):
         gaussian=True
     )
     post_state_params = post_state_transformer.params
+    post_state_params['denoiser_models_0'] = randoms_params
 
     # Prepare post_state_gauss for pmap.
     post_state_transformer = jax_utils.replicate(post_state_transformer)

@@ -393,6 +393,8 @@ class PosteriorDenoiserJoint(nn.Module):
             full matrix. Default is false.
         safe_divide: Minimum value allowed for denominators in division within
             conjugate gradient calculations.
+        regularization: Regularization added to diagonal of linear system.
+        error_threshold: Threshold for error in conjugate gradient calculations.
 
     Notes:
         Can also be used as a regular posterior denoiser if only one denoiser
@@ -613,6 +615,7 @@ class PosteriorDenoiserJointDiagonal(PosteriorDenoiserJoint):
         safe_divide: Minimum value allowed for denominators in division within
             conjugate gradient calculations.
         regularization: Regularization added to diagonal of linear system.
+        error_threshold: Threshold for error in conjugate gradient calculations.
 
     Notes:
         Unlike PosteriorDenoiserJoint, this implementation assumes that the A

@@ -6,8 +6,6 @@ from functools import lru_cache
 import h5py
 import numpy as np
 import healpy as hp
-import matplotlib.pyplot as plt
-from mpi4py import MPI
 
 def ang2diamond(
     nside: int, theta: np.ndarray, phi: np.ndarray, nest: bool = True
@@ -17,8 +15,8 @@ def ang2diamond(
 
     Arguments:
         nside: HEALPix nside.
-        theta: Sky position in degrees. Shape (N,).
-        phi: Sky position in degrees. Shape (N,).
+        theta: Sky position in radians. Shape (N,).
+        phi: Sky position in radians. Shape (N,).
         nest: Pixel ordering of the returned pixel IDs. Defaults
             to True.
 
@@ -63,7 +61,7 @@ def grow_diamond(
 
     Returns:
         Pixel IDs at nside in the diamond, in sorted order. Shape
-            (N, num_pixels**2).
+            (num_pixels**2,).
     """
     # Check valid size.
     if num_pixels < 4 or (num_pixels % 2):
@@ -258,8 +256,8 @@ def process_patch(nside: int, pos: np.ndarray, num_pixels: int) -> np.ndarray:
 
 def generate_patches(
     halo_pos: np.ndarray, halo_mass: np.ndarray, halo_id: np.ndarray,
-    freqs: list[int], num_pixels: int, outdir: str, dataset_name: str,
-    noise: float = 0.0, fwhm: float = 0.0
+    freqs: list[int], num_pixels: int, map_name: str, output_file: str,
+    random_pos: bool = False
 ):
     """Generate patches around halos.
 
@@ -269,93 +267,49 @@ def generate_patches(
         halo_id: IDs of the halos. Shape (N,).
         freqs: Frequencies of the maps.
         num_pixels: Size of the diamond.
-        outdir: Output directory.
-        dataset_name: Name of the dataset.
-        random_pos: If True, use random positions instead of halo positions.
-        noise: Noise level.
-        fwhm: FWHM of the beam.
+        map_name: Name of the map.
+        output_file: Output file.
     """
-    comm = MPI.COMM_WORLD
-    rank, size = comm.rank, comm.size
-
     # Load maps.
     maps = []
-    for i, f in enumerate(freqs):
-        maps.append(hp.read_map(f_map % f, dtype=np.float32, memmap=False))
+    for f in freqs:
+        maps.append(
+            hp.read_map(
+                map_name % f, dtype=np.float32, memmap=False, nest=True
+            )
+        )
     nside = hp.get_nside(maps[0])
-    maps = np.stack(maps, axis=-1))
+    maps = np.stack(maps, axis=-1)
 
-    # Split work (round-robin so all ranks get similar count)
-    N = len(halo_pos)
-    idx_all = np.arange(N)
-    idx_my  = np.array_split(idx_all, size)[rank]   # rank 0 gets [0:...], rank 1 gets next, etc.
-    N_local = idx_my.size
+    patches = []
+    masses = []
+    ids = []
+    vecs = []
 
-    # Early exit if nothing to do
-    if N_local == 0:
-        # still barrier to let others finish
-        comm.Barrier()
-        return
+    for h_idx, h_pos, h_mass in zip(halo_id, halo_pos, halo_mass):
 
-    out_vecs = np.empty((N_local, Npix**2, 3), dtype=np.float32)  # shape (Npix*Npix, 3)
-    out_vals = np.empty((N_local, Npix**2, len(freqs)), dtype=np.float32)  # shape (Npix*Npix, Nfreq)
-    if not random_pos:
-        out_mass = np.empty((N_local,), dtype=np.float32)
-        out_ids = np.empty((N_local,), dtype=np.int32)
-
-    for j, i in enumerate(idx_my):
-        if j % 100 == 0: print(rank, j, flush=True)
-
-        if j % 500 == 0: print(rank, j, flush=True)
-
-        picked = process_patch(nside, halo_pos[i], Npix, nest=False)
-
-        # FIXME some clusters near boundareis on healpix dont build full diamonds (very rare)
-        # this causes errors. For now, completely drop these clusters.
-        if len(picked) != Npix**2:
-            out_vecs[j] = np.full(out_vecs.shape[1:], np.nan)
-            out_vals[j] = np.full(out_vals.shape[1:], np.nan)
-            if not random_pos:
-                out_mass[j] = halo_mass[i]
-                out_ids[j] = halo_id[i]
+        picked = process_patch(nside, h_pos, num_pixels)
+        if len(picked) != num_pixels**2:
             continue
+        picked = reorder_diamond(nside, picked)
 
-        # we want to match sorted(picked) to sorted(parallel) and then order according to nexted ordering (matches what happens in reorder_diamond())
-        parallel = hp.nest2ring(nside, np.arange(len(picked)))
-        swap = hp.ring2nest(nside, np.sort(parallel))   # this is the nest id in the mapped space of each pixel in np.sort(picked)
-        asort = np.argsort(swap)
-        pixs = np.sort(picked)[asort]
+        patches.append(maps[picked])
+        masses.append(h_mass)
+        ids.append(h_idx)
+        vecs.append(np.array(hp.pix2vec(nside, picked)).T)
 
-        vals = np.empty((len(pixs), len(freqs)), dtype=np.float32)
-        vecs = hp.pix2vec(nside, pixs)
-
-        for fi,freq in enumerate(freqs):
-            vals[:, fi] = maps[fi,pixs]
-
-        out_vecs[j] = np.asarray(vecs, dtype=np.float32).T
-        out_vals[j] = np.asarray(vals, dtype=np.float32)
+    with h5py.File(output_file, "w") as f:
+        f.create_dataset("patches", data=np.array(patches))
+        f.create_dataset("vecs", data=np.array(vecs))
         if not random_pos:
-            out_mass[j] = halo_mass[i]
-            out_ids[j] = halo_id[i]
+            f.create_dataset("mass", data=np.array(masses))
+            f.create_dataset("id", data=np.array(ids))
 
-    # ---- write once per rank ----
-    random_str = "random" if random_pos else "halo"
-    shard = os.path.join(outdir, f"{dataset_name}_{random_str}patches_noise{noise:.0f}_fwhm{fwhm:.0f}.{rank:d}.h5")
-    with h5py.File(shard, "w") as f:
-        #comp = dict(compression="gzip", compression_opts=4, shuffle=True)
-        f.create_dataset("vals", data=out_vals)#, **comp)    # (N_local, P, F)
-        f.create_dataset("vecs", data=out_vecs)#, **comp)    # (N_local, P, 3)
-        if not random_pos:
-            f.create_dataset("mass", data=out_mass)#,   **comp)    # (N_local,)
-            f.create_dataset("id", data=out_ids)#,   **comp)    # (N_local,)
         f.attrs["nside"] = int(nside)
-        f.attrs["Npix"] = int(Npix)
-        f.attrs["freqs"] = np.array(freqs, dtype=np.float32)
-        f.attrs["dataset_name"] = dataset_name
+        f.attrs["num_pixels"] = int(num_pixels)
+        f.attrs["freqs"] = np.array(freqs)
+        f.attrs["map_name"] = map_name
 
-    comm.Barrier()
-    if rank == 0:
-        print("done writing shards ->", outdir)
 
 def main():
     # Parse arguments.
@@ -386,6 +340,10 @@ def main():
         "--numpixels", type=int, default=64,
         help="Size of the diamond (num_pixels x num_pixels)."
     )
+    parser.add_argument(
+        "--outdir", type=str, default=None,
+        help="Output directory."
+    )
     args = parser.parse_args()
 
     profile_str = args.profile_str
@@ -396,9 +354,9 @@ def main():
     seed = args.seed
     base_dir = '/mnt/home/abayer/ceph/fastpm/halfdome/oneweek/'
     num_pixels = args.numpixels
+    outdir = args.outdir
 
     # Setup output directory.
-    outdir =  os.path.join(base_dir, 'final', profile_str, 'patches')
     os.makedirs(outdir, exist_ok=True)
 
     # TODO: Hardcoded frequencies.
@@ -432,24 +390,38 @@ def main():
 
     # Get the dataset name to use.
     if fwhm > 0 and noise > 0:
-        dataset_name = (
+        map_name = (
             base_dir + f'final/{profile_str}/{dataset_name}_noise{noise:.0f}'
             + f'_s{seed}_f%s_fwhm{fwhm:.0f}.fits'
         )
+        output_file = os.path.join(
+            outdir,
+            f'{dataset_name}_patches_noise{noise:.0f}_s{seed}_fwhm{fwhm:.0f}' +
+            f'_random_{random_pos}.h5'
+        )
     elif fwhm > 0 and noise == 0:
-        dataset_name = (
+        map_name = (
             base_dir + f'final/{profile_str}/{dataset_name}_s{seed}' +
             f'_f%s_fwhm{fwhm:.0f}.fits'
         )
+        output_file = os.path.join(
+            outdir,
+            f'{dataset_name}_patches_s{seed}_fwhm{fwhm:.0f}' +
+            f'_random_{random_pos}.h5'
+        )
     else:
-        dataset_name = (
+        map_name = (
             base_dir + f'final/{profile_str}/{dataset_name}_s{seed}_f%s.fits'
+        )
+        output_file = os.path.join(
+            outdir,
+            f'{dataset_name}_patches_s{seed}_random_{random_pos}.h5'
         )
     # Generate patches with noise and smoothing.
     generate_patches(
         halo_pos, halo_mass, halo_id, freqs,
-        num_pixels=num_pixels, outdir=outdir, dataset_name=dataset_name,
-        random_pos=random_pos, noise=noise, fwhm=fwhm
+        num_pixels=num_pixels, map_name=map_name, output_file=output_file,
+        random_pos=random_pos
     )
 
 if __name__ == "__main__":

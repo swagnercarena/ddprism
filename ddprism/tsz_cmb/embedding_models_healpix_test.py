@@ -172,7 +172,7 @@ class HEALPixTransformerTests(chex.TestCase):
         n_blocks = 3
         dropout_rate_block = [0.1, 0.1, 0.1]
         heads = 4
-        patch_size = 4
+        patch_size_list = [64, 4]
         time_emb_features = 16
         channels = 2
         nside = 8
@@ -195,7 +195,7 @@ class HEALPixTransformerTests(chex.TestCase):
             n_blocks=n_blocks,
             dropout_rate_block=dropout_rate_block,
             heads=heads,
-            patch_size=patch_size,
+            patch_size_list=patch_size_list,
             time_emb_features=time_emb_features
         )
         params = transformer.init(
@@ -216,19 +216,30 @@ class HEALPixTransformerTests(chex.TestCase):
         output_inference = apply_func(params, x, t, vec_map, train=False)
         self.assertTupleEqual(output_inference.shape, expected_shape)
 
+        # Test one dense operation per patch size.
+        for i, patch_size in enumerate(patch_size_list):
+            self.assertTrue(
+                params['params'][f'Dense_{i}']['kernel'].shape ==
+                (patch_size * channels, emb_features)
+            )
+            self.assertTrue(
+                params['params'][f'pos_embedding_{i}'].shape ==
+                (n_pixels // patch_size, emb_features)
+            )
+
 
 class FlatHEALPixTransformerTest(chex.TestCase):
-    """Run tests for the FlatUNet."""
+    """Run tests for the FlatHEALPixTransformer."""
 
     @chex.all_variants
     def test_call(self):
-        """Test that the FlatUNet returns the desired outputs."""
+        """Test that the FlatHEALPixTransformer returns the desired outputs."""
         rng = jax.random.PRNGKey(5)
         emb_features = 4
         n_blocks = 3
         dropout_rate_block = [0.1, 0.1, 0.1]
         heads = 4
-        patch_size = 4
+        patch_size_list = [64, 4]
         time_emb_features = 16
         channels = 2
         nside = 8
@@ -255,7 +266,7 @@ class FlatHEALPixTransformerTest(chex.TestCase):
             n_blocks=n_blocks,
             dropout_rate_block=dropout_rate_block,
             heads=heads,
-            patch_size=patch_size,
+            patch_size_list=patch_size_list,
             time_emb_features=time_emb_features,
             healpix_shape=healpix_shape
         )
@@ -272,7 +283,3 @@ class FlatHEALPixTransformerTest(chex.TestCase):
         )
         expected_shape = (batch_size, n_pixels * channels)
         self.assertTupleEqual(output.shape, expected_shape)
-
-
-if __name__ == '__main__':
-    absltest.main()

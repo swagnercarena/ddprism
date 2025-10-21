@@ -6,9 +6,56 @@ from einops import rearrange
 from flax import linen as nn
 import jax.numpy as jnp
 from jax import Array
+import numpy as np
 
 
 PERIOD = 1e-1
+
+
+def _compact1_64(v: np.ndarray) -> np.ndarray:
+    """Compact 1 bits into 64 bits using a bitwise operation.
+
+    Arguments:
+        v: Input array of integers to compact.
+
+    Returns:
+        Compact array of integers.
+    """
+    v = v.astype(np.uint64)
+    v &= np.uint64(0x5555555555555555)
+    v = (v | (v >> 1))  & np.uint64(0x3333333333333333)
+    v = (v | (v >> 2))  & np.uint64(0x0F0F0F0F0F0F0F0F)
+    v = (v | (v >> 4))  & np.uint64(0x00FF00FF00FF00FF)
+    v = (v | (v >> 8))  & np.uint64(0x0000FFFF0000FFFF)
+    v = (v | (v >> 16)) & np.uint64(0x00000000FFFFFFFF)
+    return v
+
+
+def nest_to_xy(nside: int, ipix: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+    """Convert NEST pixel indices to XY coordinates for neighbor averaging.
+
+    Arguments:
+        nside: HEALPix nside parameter.
+        ipix: Input array of pixel indices.
+
+    Returns:
+        Tuple of X and Y coordinates.
+
+    Notes:
+        Uses uint64 for nside of 64 calculations but returns int32.
+    """
+    # Will always have power of two nside.
+    k = int(np.log2(nside))
+    ipix = ipix.astype(np.uint64)
+
+    mask = (np.uint64(1) << np.uint64(2 * k)) - np.uint64(1)
+    # Morton code within face.
+    p = ipix & mask
+
+    x_coords = _compact1_64(p)
+    y_coords = _compact1_64(p >> np.uint64(1))
+
+    return x_coords.astype(np.int32), y_coords.astype(np.int32)
 
 
 class AdaLNZeroModulation(nn.Module):
@@ -73,8 +120,11 @@ class RelativeBias(nn.Module):
         """
         # Get the angular distance between all pairs of vectors.
         vec_map = vec_map / jnp.linalg.norm(vec_map, axis=-1, keepdims=True)
-        dot = jnp.einsum('...NK,...MK->...NM', vec_map, vec_map)
-        angle = jnp.arccos(jnp.clip(dot, -1.0, 1.0)) / 1e-3
+
+        # Angles are very small, so will need to use stable calculation.
+        dif_mat = vec_map[..., None, :] - vec_map[..., None, :, :]
+        dot = 1.0 - 0.5 * jnp.sum(dif_mat * dif_mat, axis=-1)
+        angle = jnp.arccos(jnp.clip(dot, -1.0, 1.0)) / 5e-3
 
         # Get the embedded distance between all pairs of vectors.
         freqs = jnp.linspace(0, 1, self.freq_features // 2)
@@ -116,12 +166,28 @@ class HEALPixAttention(nn.Module):
         Returns:
             Output with shape (*, N, D).
         """
+        # Basic shape checks
+        assert x.ndim >= 3, (
+            f"HEALPixAttention expects (..., N, D), got {x.shape}"
+        )
         head_dim = self.emb_features // self.n_heads
         assert head_dim * self.n_heads == self.emb_features
 
         # Multihead attention.
         batch_dim = x.shape[:-2]
         N = x.shape[-2]
+        # relative bias must match (..., N, N, H)
+        assert relative_bias_logits.shape[-1] == self.n_heads, (
+            f"relative_bias_logits heads mismatch: {relative_bias_logits.shape}"
+            f" vs n_heads={self.n_heads}"
+        )
+        assert (
+            relative_bias_logits.shape[-3] == N and
+            relative_bias_logits.shape[-2] == N
+        ), (
+            f"relative_bias_logits must be (..., N, N, H) with N={N}, got "
+            f"{relative_bias_logits.shape}"
+        )
         qkv = nn.Dense(3 * self.emb_features)(x)
         qkv = qkv.reshape(*batch_dim, N, self.n_heads, 3, head_dim)
         q, k, v = jnp.split(qkv, 3, axis=-2)
@@ -179,6 +245,20 @@ class HEALPixAttentionBlock(nn.Module):
         Returns:
             Output with shape (*, N, D).
         """
+        # Shape checks
+        assert x.ndim >= 3, (
+            f"HEALPixAttentionBlock expects (..., N, D), got {x.shape}"
+        )
+        assert t.ndim >= 2 and t.shape[-1] == self.time_emb_features, (
+            f"t must have last dim {self.time_emb_features}, got {t.shape}"
+        )
+        assert relative_bias_logits.ndim >= 4 and (
+            relative_bias_logits.shape[-1] == self.n_heads
+        ), (
+            f"relative_bias_logits must end with n_heads={self.n_heads},"
+            f" got {relative_bias_logits.shape}"
+        )
+
         # Perform adaLN-Zero modulation to condition on t.
         gamma_one, beta_one, alpha_one = (
             AdaLNZeroModulation(self.emb_features, self.time_emb_features)(t)
@@ -219,22 +299,32 @@ class HEALPixTransformer(nn.Module):
         n_blocks: Number of transformer blocks.
         dropout_rate_block: Dropout rate for each transformer block.
         heads: Number of heads in the attention mechanism.
-        patch_size: Size of the patch to divide the input map into.
+        patch_size_list: Size of each path to build an attention path for.
         time_emb_features: Size of the embedding vector that encodes the time
             features.
         freq_features: Number of frequency features for the relative bias.
+        use_patch_convolution: If True, use a patch-wise convolution to average
+            the output of each patch at each scale before combining.
+        n_average_layers: Number of layers of convolutional smoothing to apply
+            to final output.
     """
     emb_features: int
     n_blocks: int
     dropout_rate_block: Sequence[float]
     heads: int
-    patch_size: int
+    patch_size_list: Sequence[int]
     time_emb_features: int
     freq_features: int = 64
+    use_patch_convolution: bool = True
+    n_average_layers: int = 4
 
     def setup(self):
         self.relative_bias = RelativeBias(
             self.heads, freq_features=self.freq_features
+        )
+        # Relative bias for patch averaging at the output
+        self.patch_relative_bias = RelativeBias(
+            1, freq_features=self.freq_features
         )
 
     @nn.compact
@@ -252,33 +342,77 @@ class HEALPixTransformer(nn.Module):
         Returns:
             Output with shape (*, N, C).
         """
-        # Start by patchifying the input map.
-        batch_dim = x.shape[:-2]
-        N, C = x.shape[-2:]
-        x = x.reshape(*batch_dim, N // self.patch_size, self.patch_size * C)
+        # Basic input shape checks
+        assert x.ndim >= 3, (
+            f"HEALPixTransformer expects x with shape (..., N, C), got "
+            f"{x.shape}"
+        )
+        assert vec_map.ndim >= 3, (
+            f"HEALPixTransformer expects vec_map with shape (..., N, 3), got "
+            f"{vec_map.shape}"
+        )
+        assert vec_map.shape[:-1] == x.shape[:-1], (
+            f"vec_map batch dims {vec_map.shape[:-1]} must match x batch dims "
+            f"{x.shape[:-1]}"
+        )
+        assert vec_map.shape[-1] == 3, (
+            f"vec_map last dim must be 3, got {vec_map.shape}"
+        )
+        assert vec_map.shape[-2] == x.shape[-2], (
+            f"N mismatch between x and vec_map: {x.shape[-2]} vs "
+            f"{vec_map.shape[-2]}"
+        )
 
         # Shape validations.
-        assert N % self.patch_size == 0, "N must be divisible by patch_size"
+        N, C = x.shape[-2:]
+        for patch_size in self.patch_size_list:
+            assert N % patch_size == 0, "N must be divisible by all patch_size"
         assert len(self.dropout_rate_block) == self.n_blocks
 
+        # Start by patchifying the input map and embedding each patch.
+        x_list = [
+            rearrange(x, '... (N P) C -> ... N (P C)', P=patch_size)
+            for patch_size in self.patch_size_list
+        ]
+
         # Set the vector of each patch to the average of the patches.
-        vec_map = vec_map.reshape(
-            *batch_dim, N // self.patch_size, self.patch_size, 3
+        vec_map_patches = jnp.concatenate(
+            [
+                jnp.mean(
+                    rearrange(
+                        vec_map, '... (N P) V -> ... N P V', P=patch_size, V=3
+                    ),
+                    axis=-2
+                )
+                for patch_size in self.patch_size_list
+            ], axis=-2
         )
-        vec_map = jnp.mean(vec_map, axis=-2)
 
         # Compute the shared relative bias logits.
-        relative_bias_logits = self.relative_bias(vec_map)
+        relative_bias_logits = self.relative_bias(vec_map_patches)
 
         # Embed the input map to have dimension (B, N // patch_size, D) and add
         # absolute positional embedding for each patch.
-        x = nn.Dense(self.emb_features)(x)
-        pos_embedding = self.param(
-            "pos_embedding",
-            nn.initializers.normal(stddev=0.02),
-            (N // self.patch_size, self.emb_features),
+        x = jnp.concatenate(
+            [nn.Dense(self.emb_features)(x) for x in x_list], axis=-2
         )
-        x = x + jnp.broadcast_to(pos_embedding, x.shape)
+        assert x.shape[-1] == self.emb_features
+        pos_embedding = jnp.concatenate(
+            [
+                self.param(
+                    f"pos_embedding_{i}",
+                    nn.initializers.normal(stddev=0.02),
+                    (N // self.patch_size_list[i], self.emb_features)
+                ) for i in range(len(self.patch_size_list))
+            ], axis=-2
+        )
+        # Positional embedding broadcast check
+        pos_broadcast = jnp.broadcast_to(pos_embedding, x.shape)
+        assert pos_broadcast.shape == x.shape, (
+            f"positional embedding broadcast failed: {pos_broadcast.shape} vs "
+            f"x {x.shape}"
+        )
+        x = x + pos_broadcast
 
         for i in range(self.n_blocks):
             x = HEALPixAttentionBlock(
@@ -288,8 +422,91 @@ class HEALPixTransformer(nn.Module):
 
         # Decode back to patch space.
         x = nn.LayerNorm()(x)
-        x = nn.Dense(self.patch_size * C)(x)
-        x = x.reshape(*batch_dim, N, C)
+
+        # Break up into individual patches again.
+        n_patches = [N // patch_size for patch_size in self.patch_size_list]
+        sections = np.cumsum(n_patches)[:-1].tolist()
+        x_list = jnp.split(x, sections, axis=-2)
+        x_list = [
+            nn.Dense(patch_size * C)(x)
+            for patch_size, x in zip(self.patch_size_list, x_list)
+        ]
+        for i in range(len(self.patch_size_list)):
+            assert x_list[i].shape[-2] == n_patches[i], (
+                f"x_list[{i}] shape {x_list[i].shape} must match n_patches[{i}]"
+                f" {n_patches[i]}"
+            )
+            assert x_list[i].shape[-1] == self.patch_size_list[i] * C, (
+                f"x_list[{i}] shape {x_list[i].shape} must match "
+                f"{self.patch_size_list[i]*C}"
+            )
+
+        # Average each patch representation by all patches weighted by relative
+        # bias. This is a healpix convolutional operation for final smoothing.
+        # Split vec_map_patches into separate groups for each patch size.
+        vec_map_patches_list = jnp.split(vec_map_patches, sections, axis=-2)
+
+        if self.use_patch_convolution:
+            # Apply relative bias weighted averaging separately for each patch
+            # size group with skip connection.
+            x_list_with_skip = []
+            for vec_patches, x_patches in zip(vec_map_patches_list, x_list):
+                # Compute relative bias for this patch size group.
+                patch_bias_logits = self.patch_relative_bias(vec_patches)
+                # patch_bias_logits has shape (..., n_patches[i], n_patches[i], 1)
+                patch_bias_logits = patch_bias_logits.squeeze(axis=-1)
+                # Apply softmax to get attention weights
+                patch_weights = nn.softmax(patch_bias_logits, axis=-1)
+                x_averaged = jnp.einsum(
+                    '...NM,...MP->...NP', patch_weights, x_patches
+                )
+                # Add skip connection
+                x_list_with_skip.append(x_averaged + x_patches)
+
+            x_list = x_list_with_skip
+
+        # Weighted average of the prediction for each pixel.
+        x_list = jnp.stack(
+            [
+                rearrange(x, '... N (P C) -> ... (N P) C', P=patch_size)
+                for patch_size, x in zip(self.patch_size_list, x_list)
+            ], axis=-1
+        )
+        x = nn.Dense(1)(x_list).squeeze(axis=-1)
+
+        if self.n_average_layers > 0:
+            # Do a neighbor averaging operation to avoid edge effects between
+            # patches. Ideally this would be aware of angular distance between
+            # pixels, but that's not currently implemented.
+            nside = int(np.sqrt(x.shape[-2]))
+            # Temporary 2d array for concolution.
+            x_twod = rearrange(
+                jnp.zeros_like(x), '... (N M) C -> ... N M C', N=nside, M=nside
+            )
+            x_coords, y_coords = nest_to_xy(nside, np.arange(nside*nside))
+            x_twod = x_twod.at[...,x_coords,y_coords,:].set(x)
+
+            # Convolutional layers.
+            for i in range(self.n_average_layers):
+                x_twod = nn.Conv(
+                    x.shape[-1], kernel_size=(5,5), strides=(1,1),
+                    padding='SAME'
+                )(x_twod)
+                x_twod = nn.LayerNorm()(x_twod)
+                x_twod = nn.silu(x_twod)
+            x_twod = nn.Conv(
+                x.shape[-1], kernel_size=(5,5), strides=(1,1), padding='SAME'
+            )(x_twod)
+
+            # Verify spatial dimensions haven't been reduced.
+            assert x_twod.shape[-3] == nside and x_twod.shape[-2] == nside, (
+                f"x_twod spatial dimensions must remain {nside}x{nside}, "
+                f"got {x_twod.shape[-3]}x{x_twod.shape[-2]}"
+            )
+
+            # Add back to the original array.
+            x = x + x_twod[...,x_coords,y_coords,:]
+
         return x
 
 
@@ -301,10 +518,12 @@ class FlatHEALPixTransformer(HEALPixTransformer):
         n_blocks: Number of transformer blocks.
         dropout_rate_block: Dropout rate for each transformer block.
         heads: Number of heads in the attention mechanism.
-        patch_size: Size of the patch to divide the input map into.
+        patch_size_list: Size of each path to build an attention path for.
         time_emb_features: Size of the embedding vector that encodes the time
             features.
         freq_features: Number of frequency features for the relative bias.
+        n_average_layers: Number of layers of convolutional smoothing to apply
+            to final output.
         healpix_shape: Healpix shape with the number of channels.
     """
     healpix_shape: Sequence[int] = None
@@ -347,6 +566,11 @@ class FlatHEALPixTransformer(HEALPixTransformer):
         Returns:
             Input image with shape (*, N, C).
         """
+        # Validate flat feature dimension matches N*C
+        assert x.shape[-1] == self.healpix_shape[0] * self.healpix_shape[1], (
+            f"FlatHEALPixTransformer.reshape expected last dim "
+            f"N*C={self.healpix_shape[0]*self.healpix_shape[1]}, got {x.shape}"
+        )
         return rearrange(
             x, '... (N C) -> ... N C',
             N=self.healpix_shape[0], C=self.healpix_shape[1]

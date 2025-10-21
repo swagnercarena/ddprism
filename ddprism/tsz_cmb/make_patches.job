@@ -18,9 +18,9 @@ source $VENVDIR/pyrecon/bin/activate
 
 for profile_str in 'b16g7rel'; do  # 'b16' 'b16g7' 'b16g7rel'
 
-srun -N 1 -n 8 -c 8 python make_patches.py --profile_str $profile_str --dataset_name "T_tot" --noise 7    # for conistency with nilc, maybe read in noised maps rather than doing on fly... but seed should be matched
+srun -N 1 -n 8 -c 8 python make_patches.py --profile_str $profile_str --dataset_name "T_tot" --noise 7
 srun -N 1 -n 8 -c 8 python make_patches.py --profile_str $profile_str --dataset_name "dT_tsz" --noise 0
-#srun -N 1 -n 8 -c 8 python make_patches.py --profile_str $profile_str --dataset_name "T_tot" --random_pos --noise 7
-#srun -N 1 -n 8 -c 8 python make_patches.py --profile_str $profile_str --dataset_name "dT_cmblens" --random_pos --noise 0
+srun -N 1 -n 8 -c 8 python make_patches.py --profile_str $profile_str --dataset_name "T_tot" --random_pos --noise 7
+srun -N 1 -n 8 -c 8 python make_patches.py --profile_str $profile_str --dataset_name "dT_cmblens" --random_pos --noise 0
 
 done

@@ -220,6 +220,7 @@ def main(_):
         x_post = rearrange(
             jnp.stack(x_post, axis=0), 'K M N ... -> (K M N) ...'
         )
+        x_post = jnp.clip(x_post, -config.data_max, config.data_max)
 
         # Get the statistics of the separate grass sample.
         rng_ppca, rng = jax.random.split(rng)
@@ -314,6 +315,7 @@ def main(_):
         x_post = rearrange(
             jnp.stack(x_post, axis=0), 'K M N ... -> (K M N) ...'
         )
+        x_post = jnp.clip(x_post, -config.data_max, config.data_max)
 
         # Calculate and log metrics for our posterior sample.
         metrics_dict_post = compute_metrics_for_samples(x_post, rand_no_noise)

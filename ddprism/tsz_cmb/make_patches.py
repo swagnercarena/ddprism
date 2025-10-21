@@ -6,6 +6,7 @@ from functools import lru_cache
 import h5py
 import numpy as np
 import healpy as hp
+from tqdm import tqdm
 
 def ang2diamond(
     nside: int, theta: np.ndarray, phi: np.ndarray, nest: bool = True
@@ -295,8 +296,11 @@ def generate_patches(
     vecs = []
 
     print(f"\nProcessing patches...")
-    for h_idx, h_pos, h_mass in zip(halo_id, halo_pos, halo_mass):
-
+    for h_idx, h_pos, h_mass in tqdm(
+        zip(halo_id, halo_pos, halo_mass),
+        total=len(halo_id),
+        desc="Creating patches"
+    ):
         picked = process_patch(nside, h_pos, num_pixels)
         if len(picked) != num_pixels**2:
             continue

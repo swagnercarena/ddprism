@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH -J make_patches
 #SBATCH -C genoa
-#SBATCH -p gen
+#SBATCH -p cmbas
 #SBATCH -t 20:00:00
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=8
@@ -16,7 +16,11 @@ module load python/3.10.10
 module load openmpi python-mpi
 source $VENVDIR/pyrecon/bin/activate
 
-srun -N 1 -n 8 -c 8 python make_patches.py --dataset_name "T_tot" --noise 7
-srun -N 1 -n 8 -c 8 python make_patches.py --dataset_name "dT_tsz" --noise 0
-srun -N 1 -n 8 -c 8 python make_patches.py --dataset_name "T_tot" --random_pos --noise 7
-srun -N 1 -n 8 -c 8 python make_patches.py --dataset_name "dT_cmblens" --random_pos --noise 0
+for profile_str in 'b16g7rel'; do  # 'b16' 'b16g7' 'b16g7rel'
+
+srun -N 1 -n 8 -c 8 python make_patches.py --profile_str $profile_str --dataset_name "T_tot" --noise 7
+srun -N 1 -n 8 -c 8 python make_patches.py --profile_str $profile_str --dataset_name "dT_tsz" --noise 0
+srun -N 1 -n 8 -c 8 python make_patches.py --profile_str $profile_str --dataset_name "T_tot" --random_pos --noise 7
+srun -N 1 -n 8 -c 8 python make_patches.py --profile_str $profile_str --dataset_name "dT_cmblens" --random_pos --noise 0
+
+done

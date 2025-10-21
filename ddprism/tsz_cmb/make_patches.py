@@ -239,7 +239,7 @@ def process_patch(nside, pos, Npix, nest=False):
 
 #######################
 
-def main(halo_pos, halo_mass, outdir="./patches_out", dataset_name="blah", random_pos=False, noise=0):
+def main(halo_pos, halo_mass, noise=0, fwhm=0, outdir="./patches_out", dataset_name="blah", random_pos=False):
     comm = MPI.COMM_WORLD
     rank, size = comm.rank, comm.size
 
@@ -249,10 +249,16 @@ def main(halo_pos, halo_mass, outdir="./patches_out", dataset_name="blah", rando
     # load maps
     f_map = mother + f'final/{profile_str}/{dataset_name}_s{seed}_f%s.fits'
 
+    if fwhm > 0 and noise > 0:
+        f_map = mother + f'final/{profile_str}/{dataset_name}_noise{noise:.0f}_s{seed}_f%s_fwhm{fwhm:.0f}.fits'
+    elif fwhm > 0 and noise == 0:
+        f_map = mother + f'final/{profile_str}/{dataset_name}_s{seed}_f%s_fwhm{fwhm:.0f}.fits'
+    else:
+        f_map = mother + f'final/{profile_str}/{dataset_name}_s{seed}_f%s.fits'
+
     maps = np.empty((len(freqs), hp.nside2npix(nside)), dtype=np.float32)   # store all maps in memory for easy reading out later
     for i, f in enumerate(freqs):
-        np.random.seed(42 + f)   # different seed per freq
-        maps[i] = hp.read_map(f_map % f, dtype=np.float32, memmap=False) + np.random.normal(scale=noise, size=hp.nside2npix(nside))
+        maps[i] = hp.read_map(f_map % f, dtype=np.float32, memmap=False)
 
     assert(nside == hp.get_nside(maps[0]))
 
@@ -276,6 +282,8 @@ def main(halo_pos, halo_mass, outdir="./patches_out", dataset_name="blah", rando
 
     for j, i in enumerate(idx_my):
         if j % 100 == 0: print(rank, j, flush=True)
+
+        if j % 500 == 0: print(rank, j, flush=True)
 
         picked = process_patch(nside, halo_pos[i], Npix, nest=False)
 
@@ -309,7 +317,7 @@ def main(halo_pos, halo_mass, outdir="./patches_out", dataset_name="blah", rando
 
     # ---- write once per rank ----
     random_str = "random" if random_pos else "halo"
-    shard = os.path.join(outdir, f"{dataset_name}_{random_str}patches_noise{noise}.{rank:d}.h5")
+    shard = os.path.join(outdir, f"{dataset_name}_{random_str}patches_noise{noise:.0f}_fwhm{fwhm:.0f}.{rank:d}.h5")
     with h5py.File(shard, "w") as f:
         #comp = dict(compression="gzip", compression_opts=4, shuffle=True)
         f.create_dataset("vals", data=out_vals)#, **comp)    # (N_local, P, F)
@@ -332,10 +340,14 @@ if __name__ == "__main__":
     # argarse
     # make  into arg
     parser = argparse.ArgumentParser(description="Make patches around halos.")
+    parser.add_argument("--profile_str", type=str, default="b16", help="Profile string (b16, b16g7, b16g7rel, default: b16)")
     parser.add_argument("--dataset_name", type=str, default="dT_tsz", help="Name of the dataset (default: dT_tsz)")
     parser.add_argument("--random_pos", action="store_true", help="Use random positions instead of halo positions.")
     parser.add_argument("--noise", type=float, default=0, help="Add this noise in uK to each pixel.")
+    parser.add_argument("--fwhm", type=float, default=2, help="Load maps with this fwhm beam.")
     args = parser.parse_args()
+
+    profile_str = args.profile_str
     dataset_name = args.dataset_name
     random_pos = args.random_pos
     noise = args.noise
@@ -343,13 +355,16 @@ if __name__ == "__main__":
     # TODO BEAM 1.4' ?
 
      ### INPUT ###########
+    fwhm = args.fwhm
+
+    ### INPUT ##########
     seed = 100
     mother = '/mnt/home/abayer/ceph/fastpm/halfdome/oneweek/'
-    profile_str = 'b16'  # b16, break
     Npix = 64  # diamond size of patch
     nside = 8192   # FIXME assumed can change later
 
-    outdir =  '/mnt/ceph/users/abayer/fastpm/halfdome/oneweek/patches/'   # FIXME change
+    outdir =  f'/mnt/ceph/users/abayer/fastpm/halfdome/oneweek/final/{profile_str}/patches/'   # FIXME change
+    os.makedirs(outdir, exist_ok=True)
 
     #### GLOBALS ############
 
@@ -384,3 +399,5 @@ if __name__ == "__main__":
         halo_pos /= np.linalg.norm(halo_pos, axis=1, keepdims=True)
 
     main(halo_pos, halo_mass, outdir=outdir, dataset_name=dataset_name, random_pos=random_pos, noise=noise)
+
+    main(halo_pos, halo_mass, noise=noise, fwhm=fwhm, outdir=outdir, dataset_name=dataset_name, random_pos=random_pos)

@@ -270,22 +270,31 @@ def generate_patches(
         map_name: Name of the map.
         output_file: Output file.
     """
+    print(f"Starting patch generation for {len(halo_pos)} halos")
+    print(f"Patch size: {num_pixels}x{num_pixels} pixels")
+    print(f"Random positions: {random_pos}")
+
     # Load maps.
+    print(f"\nLoading maps at frequencies: {freqs}")
     maps = []
     for f in freqs:
+        map_file = map_name % f
+        print(f"  Loading {map_file}...")
         maps.append(
             hp.read_map(
-                map_name % f, dtype=np.float32, memmap=False, nest=True
+                map_file, dtype=np.float32, memmap=False, nest=True
             )
         )
     nside = hp.get_nside(maps[0])
     maps = np.stack(maps, axis=-1)
+    print(f"Maps loaded successfully. nside={nside}, shape={maps.shape}")
 
     patches = []
     masses = []
     ids = []
     vecs = []
 
+    print(f"\nProcessing patches...")
     for h_idx, h_pos, h_mass in zip(halo_id, halo_pos, halo_mass):
 
         picked = process_patch(nside, h_pos, num_pixels)
@@ -298,6 +307,9 @@ def generate_patches(
         ids.append(h_idx)
         vecs.append(np.array(hp.pix2vec(nside, picked)).T)
 
+    print(f"Processing complete: {len(patches)} patches created")
+
+    print(f"\nWriting output to {output_file}...")
     with h5py.File(output_file, "w") as f:
         f.create_dataset("patches", data=np.array(patches))
         f.create_dataset("vecs", data=np.array(vecs))
@@ -309,6 +321,8 @@ def generate_patches(
         f.attrs["num_pixels"] = int(num_pixels)
         f.attrs["freqs"] = np.array(freqs)
         f.attrs["map_name"] = map_name
+
+    print(f"Done! Output saved to {output_file}")
 
 
 def main():

@@ -186,6 +186,9 @@ def main(_):
     # TODO: Hardcoded!
     healpix_shapes = [(sz_obs.shape[-1] // 3, 3)] * 2
     feat_dim = sz_obs.shape[-1]
+    total_x_dim = sum(
+        [hp_shape[0] * hp_shape[1] for hp_shape in healpix_shapes]
+    )
 
     # Initialize our Gaussian state.
     rng_state, rng = jax.random.split(rng)
@@ -224,7 +227,7 @@ def main(_):
 
     sample_pmap = jax.pmap(
         functools.partial(
-            sample, total_x_features=feat_dim,
+            sample, total_x_features=total_x_dim,
             sample_batch_size=config.sample_batch_size,
             sampling_kwargs=config.gaussian_sampling_kwargs
         ),
@@ -296,7 +299,7 @@ def main(_):
     # Change the sampling parameters to those for the diffusion model.
     sample_pmap = jax.pmap(
         functools.partial(
-            sample, total_x_features=feat_dim,
+            sample, total_x_features=total_x_dim,
             sample_batch_size=config.sample_batch_size,
             sampling_kwargs=config.sampling_kwargs
         ),

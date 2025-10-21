@@ -2,65 +2,55 @@
 # -*- coding: utf-8 -*-
 
 import os
+import argparse
+from functools import lru_cache
+
 import h5py
 import numpy as np
-from mpi4py import MPI
-
-import argparse
 import healpy as hp
 import matplotlib.pyplot as plt
+from mpi4py import MPI
 
 from utils import xyz_to_lonlat
 
 
 #####################################
 
-def ang2diamond(nside, theta, phi, nest=False):
+def ang2diamond(
+    nside: int, theta: np.ndarray, phi: np.ndarray, nest: bool = True
+) -> np.ndarray:
     """
-    Given a nside map, pick the parent pixel at nside/2 that contains
-    (RA,Dec), and return the 4 child pixel IDs (a 2x2 diamond) at nside_hi.
+    Given nside pixel, return the pixel IDs for parent pixel at child res.
 
-    Parameters
-    ----------
-    nside : int
-        map nside.
-    theta, phi : float
-        Sky position in degrees, in the map’s coordinate frame.
-    nest : bool
-        Pixel ordering of the input map AND returned pixel IDs.
+    Arguments:
+        nside: HEALPix nside.
+        theta: Sky position in degrees. Shape (N,).
+        phi: Sky position in degrees. Shape (N,).
+        nest: Pixel ordering of the returned pixel IDs. Defaults
+            to True.
 
-    Returns
-    -------
-    children : np.ndarray (shape (4,), dtype=int)
-        Pixel IDs at nside.
+    Returns:
+        Pixel IDs at original nside resolution. Shape (N, 4).
     """
-    
-    nside_hi = nside
-    nside_lo = nside // 2
 
-    # Parent at lower NSIDE in the requested ordering
-    parent_lo = hp.ang2pix(nside_lo, theta, phi, nest=nest)
+    parent_pix = hp.ang2pix(nside // 2, theta, phi, nest=nest)
+    children_pix = (
+        4 * parent_pix[..., None] + np.array([0,1,2,3], dtype=np.int64)[None]
+    )
 
-    # Convert to NESTED to enumerate children easily
-    if nest:
-        parent_nest = parent_lo
-    else:
-        parent_nest = hp.ring2nest(nside_lo, parent_lo)
+    if not nest:
+        children_pix = hp.nest2ring(nside, children_pix)
 
-    # The 4 children in NESTED at the higher NSIDE
-    children_nest_hi = 4*parent_nest + np.array([0,1,2,3], dtype=np.int64)
+    return children_pix
 
-    # Convert back to requested ordering
-    if nest:
-        children_hi = children_nest_hi
-    else:
-        children_hi = hp.nest2ring(nside_hi, children_nest_hi)
 
-    return children_hi
-
-def grow_diamond(nside, theta_deg, phi_deg, Npix, nest=False):
+def grow_diamond(
+    nside: int, theta_deg: np.ndarray, phi_deg: np.ndarray, num_pixels: int,
+    nest: bool = True
+) -> np.ndarray:
     """
     Grow a diamond around a point of size Npix x Npix pixels by graph expansion.
+
     The diamond is grown in L = (Npix-2)//2 steps, starting from
     the 2×2 children of the parent pixel at nside/2 that contains the point.
     Each step adds all neighbours of the current set of pixels simultaneously.
@@ -68,84 +58,94 @@ def grow_diamond(nside, theta_deg, phi_deg, Npix, nest=False):
     and the 2×2 seed has 4 neighbours outside the seed, which are added
     in the first step, and then each of those has 4 new neighbours outside
     the current set, etc.
-    
-    Parameters
-    ----------
-    nside : int
-        Map nside.
-    theta_deg, phi_deg : float
-        Sky position in degrees, in the map’s coordinate frame.
-    Npix : int  
-        Desired diamond size (Npix x Npix pixels). Must be even and ≥ 4.
-    nest : bool
-        Pixel ordering of the input map AND returned pixel IDs. Default: False (RING).
-    Returns
-    -------
-    S : np.ndarray (shape (M,), dtype=int)
-        Pixel IDs at nside in the diamond, in sorted order.
-    """
-    if Npix < 4 or (Npix % 2):
-        raise ValueError("Npix must be even and ≥ 4 (e.g., 4, 6, 8, ...).")
-    L = (Npix - 2) // 2  # number of expansion steps
-    seeds = ang2diamond(nside, theta_deg, phi_deg, nest=nest)
-    S = set(int(p) for p in seeds)
-    getN = hp.get_all_neighbours
 
-    for _ in range(L):
-        # snapshot of current set to expand this step (simultaneous growth)
-        cur = list(S)
-        additions = set()
-        for p in cur:
-            neigh = getN(nside, p, nest=nest)
-            for nb in neigh:
-                if nb >= 0:
-                    additions.add(int(nb))
-        S |= additions
+    Arguments:
+        nside: HEALPix nside.
+        theta_deg: Sky position in degrees. Shape (N,).
+        phi_deg: Sky position in degrees. Shape (N,).
+        num_pixels: Desired diamond size (num_pixels x num_pixels). Must be
+            even and ≥ 4.
+        nest: Pixel ordering of the input map AND returned pixel IDs. Default:
+            True.
 
-    # return as sorted array for reproducibility (RING/NEST IDs as requested)
-    return np.array(sorted(S), dtype=np.int64)
-
-def reorder_diamond(nside, picked, M, nest=False):
-    """
-    Reorder picked pixels to be in a nested structure by mapping to ring and back to 0... nest.
-    
-    Args:
-        nside (int): HEALPix nside
-        picked (array): array of picked pixel indices from the diamond search
-        M (array): masked map with only picked pixels (1 otherwise)
-        nest (bool): whether the input picked pixels are in nested ordering (default: False)
-    
     Returns:
-        array: reordered picked pixel indices in ring ordering 
-    
+        Pixel IDs at nside in the diamond, in sorted order. Shape
+            (N, num_pixels**2).
     """
+    # Check valid size.
+    if num_pixels < 4 or (num_pixels % 2):
+        raise ValueError("Npix must be even and ≥ 4 (e.g., 4, 6, 8, ...).")
 
-    fake_map = np.full(hp.nside2npix(nside), hp.UNSEEN, dtype=float)
+    steps = (num_pixels - 2) // 2  # number of expansion steps
 
+    neigh = ang2diamond(nside, theta_deg, phi_deg, nest=nest).flatten()
+    pixel_ids = set(neigh.tolist())
+
+    # Add neighbors for the required number of steps.
+    for s in range(steps):
+        neigh = np.unique(
+            hp.get_all_neighbours(nside, neigh, nest=nest).flatten()
+        )
+        pixel_ids.update(neigh[neigh >= 0].tolist())
+
+    # Return as sorted array for reproducibility (RING/NEST IDs as requested)
+    return np.array(sorted(pixel_ids), dtype=np.int64)
+
+
+@lru_cache(maxsize=256)
+def get_ring_pixels(nside: int, num_pixels: int) -> np.ndarray:
+    """
+    Get the pixel indices for a nested HEALPix map of given size.
+
+    Arguments:
+        nside: HEALPix nside.
+        num_pixels: Desired diamond size (num_pixels x num_pixels). Must be
+            even and ≥ 4.
+
+    Returns:
+        Pixel indices. Shape (num_pixels ** 2,).
+    """
+    # Check valid size.
+    if num_pixels < 4 or (num_pixels % 2):
+        raise ValueError("Npix must be even and ≥ 4 (e.g., 4, 6, 8, ...).")
+
+    # Get the pixel indices for the ring of a given size.
+    return hp.nest2ring(nside, np.arange(num_pixels ** 2))
+
+
+def reorder_diamond(nside: int, picked: np.ndarray) -> np.ndarray:
+    """
+    Reorder pixels to be the first n_pixels**2 pixels in the nested ordering.
+
+    Arguments:
+        nside: HEALPix nside
+        picked: Pixel indices from the diamond search. Shape (n_pixels**2,).
+
+    Returns:
+        Reordered pixel indices.
+    """
     parallel = hp.nest2ring(nside, np.arange(len(picked)))
-    fake_map[np.sort(parallel)] = M[np.sort(picked)]
-
-    pixel_id = np.sort(parallel)[len(parallel)//2]   # this is just useful for plotting center
 
     return fake_map, pixel_id
+
 
 def plot_diamond(nside, lon, lat, picked, pixel_id, m, nest=False):
     """
     Plot the picked pixels in various views.
     (gnom, cart) X (before and after reordering to nested)
-    
+
     Args:
         nside (int): HEALPix nside
         lon (float): longitude of the center in degrees
         lat (float): latitude of the center in degrees
         picked (array): array of picked pixel indices from the diamond search
-        m (array): map 
-        pixel_id (int): central pixel id for plotting   
+        m (array): map
+        pixel_id (int): central pixel id for plotting
     """
     # build a masked map with only the picked pixels visible
     M = np.full(hp.nside2npix(nside), hp.UNSEEN, dtype=float)
     M[picked] = m[picked]
-    
+
     # reorder the picked pixels to be in a nested structure
     fake_map, pixel_id = reorder_diamond(nside, picked, M, nest=nest)
 
@@ -168,16 +168,16 @@ def plot_diamond(nside, lon, lat, picked, pixel_id, m, nest=False):
     span_deg = (xsize * reso) / 60.0
     half = 0.5 * span_deg
     pad_fac = 1
-    
+
     _lon = lon - 360 if lon > 180 else lon   # cartview wants -180 to 180
-    
+
     lonra = [_lon - half * pad_fac, _lon + half * pad_fac]
     latra = [lat - half * pad_fac, lat + half * pad_fac]
 
     hp.cartview(M, nest=nest,
                 notext=True, cbar=False, lonra=lonra, latra=latra,
                 hold=1)
-    
+
     print(lonra, latra, _lon, lat)
     hp.projplot(_lon, lat, lonlat=True, marker="x", color="k")
     plt.show()
@@ -208,7 +208,7 @@ def plot_diamond(nside, lon, lat, picked, pixel_id, m, nest=False):
                     hold=1)
 
     plt.show()
-    
+
 ###################
 
 def process_patch(nside, pos, Npix, nest=False):
@@ -216,25 +216,25 @@ def process_patch(nside, pos, Npix, nest=False):
     Process a patch around (lon, lat) into a Npix x Npix diamond.
     This includes growing the diamond, building the masked map,
     reordering to nested, and plotting.
-    
+
     Args:
         m: the map being processed
         pos (float): xyz position of the cluster shape (3,)
         Npix: size of diamond
-        
+
         nest (bool): whether the input map is in nested ordering (default: False)
         plot (bool): whether to plot the results (default: False)
     """
-    
+
     assert(nest==False)  # only RING input supported for now
-    
+
     lon, lat = xyz_to_lonlat(pos)
-    
+
     theta = np.radians(90 - lat)
     phi = np.radians(lon)
-    
+
     picked = grow_diamond(nside, theta, phi, Npix, nest=nest)
-        
+
     return picked
 
 #######################
@@ -245,10 +245,10 @@ def main(halo_pos, halo_mass, outdir="./patches_out", dataset_name="blah", rando
 
     if rank == 0:
         os.makedirs(outdir, exist_ok=True)
-    
+
     # load maps
     f_map = mother + f'final/{profile_str}/{dataset_name}_s{seed}_f%s.fits'
-    
+
     maps = np.empty((len(freqs), hp.nside2npix(nside)), dtype=np.float32)   # store all maps in memory for easy reading out later
     for i, f in enumerate(freqs):
         np.random.seed(42 + f)   # different seed per freq
@@ -273,12 +273,12 @@ def main(halo_pos, halo_mass, outdir="./patches_out", dataset_name="blah", rando
     if not random_pos:
         out_mass = np.empty((N_local,), dtype=np.float32)
         out_ids = np.empty((N_local,), dtype=np.int32)
-        
+
     for j, i in enumerate(idx_my):
         if j % 100 == 0: print(rank, j, flush=True)
-        
+
         picked = process_patch(nside, halo_pos[i], Npix, nest=False)
-        
+
         # FIXME some clusters near boundareis on healpix dont build full diamonds (very rare)
         # this causes errors. For now, completely drop these clusters.
         if len(picked) != Npix**2:
@@ -288,19 +288,19 @@ def main(halo_pos, halo_mass, outdir="./patches_out", dataset_name="blah", rando
                 out_mass[j] = halo_mass[i]
                 out_ids[j] = halo_id[i]
             continue
-    
+
         # we want to match sorted(picked) to sorted(parallel) and then order according to nexted ordering (matches what happens in reorder_diamond())
         parallel = hp.nest2ring(nside, np.arange(len(picked)))
         swap = hp.ring2nest(nside, np.sort(parallel))   # this is the nest id in the mapped space of each pixel in np.sort(picked)
         asort = np.argsort(swap)
         pixs = np.sort(picked)[asort]
-        
+
         vals = np.empty((len(pixs), len(freqs)), dtype=np.float32)
         vecs = hp.pix2vec(nside, pixs)
-        
+
         for fi,freq in enumerate(freqs):
             vals[:, fi] = maps[fi,pixs]
-    
+
         out_vecs[j] = np.asarray(vecs, dtype=np.float32).T
         out_vals[j] = np.asarray(vals, dtype=np.float32)
         if not random_pos:
@@ -328,7 +328,7 @@ def main(halo_pos, halo_mass, outdir="./patches_out", dataset_name="blah", rando
 
 if __name__ == "__main__":
     # Toggle gzip by setting compress=True if disk is tight (slower writes).
-    
+
     # argarse
     # make  into arg
     parser = argparse.ArgumentParser(description="Make patches around halos.")
@@ -339,9 +339,9 @@ if __name__ == "__main__":
     dataset_name = args.dataset_name
     random_pos = args.random_pos
     noise = args.noise
-    
+
     # TODO BEAM 1.4' ?
-    
+
      ### INPUT ###########
     seed = 100
     mother = '/mnt/home/abayer/ceph/fastpm/halfdome/oneweek/'
@@ -355,7 +355,7 @@ if __name__ == "__main__":
 
     freqs = [93, 143, 353]
 
-    f_halos = f'/mnt/home/abayer/ceph/fastpm/halfdome/stampede2_3750Mpch_6144cube/final_res/halos/lightcone_{seed}.hdf5'   
+    f_halos = f'/mnt/home/abayer/ceph/fastpm/halfdome/stampede2_3750Mpch_6144cube/final_res/halos/lightcone_{seed}.hdf5'
 
     with h5py.File(f_halos, "r") as f:
         halo_pos = f['Position'][:]
@@ -377,10 +377,10 @@ if __name__ == "__main__":
     # halo_pos = halo_pos[:100]
     # halo_mass = halo_mass[:100]
     # halo_id = halo_id[:100]
-    
+
     if random_pos:
         # assign completely random (isotropic) positions of correct shape
         halo_pos = np.random.normal(size=(len(halo_pos), 3))
         halo_pos /= np.linalg.norm(halo_pos, axis=1, keepdims=True)
-    
+
     main(halo_pos, halo_mass, outdir=outdir, dataset_name=dataset_name, random_pos=random_pos, noise=noise)

@@ -1,4 +1,5 @@
 """Basic configuration for the variable mixing matrix problem."""
+from ml_collections import ConfigDict
 import config_randoms
 
 def get_config():

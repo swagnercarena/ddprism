@@ -50,7 +50,7 @@ def apply_model_with_config(config):
 def compute_metrics_for_samples(x_post, sz_no_noise):
     """Compute metrics for randoms samples."""
     rmse = jnp.sqrt(jnp.mean(jnp.square(x_post - sz_no_noise)))
-    return {'rmse': rmse}
+    return {'rmse_sz': rmse}
 
 
 update_model = jax.pmap( # pylint: disable=invalid-name
@@ -335,7 +335,7 @@ def main(_):
                 )
             )
             wandb.log(
-                {'loss_state': jax_utils.unreplicate(loss)}
+                {'loss_state_sz': jax_utils.unreplicate(loss)}
             )
 
         # Generate new posterior samples with our model.

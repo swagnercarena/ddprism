@@ -60,7 +60,7 @@ def get_config():
     # Sampling arguments
     config.sampling_kwargs = ConfigDict(
         {
-            'steps': 64, 'sampler': 'pc', 'corrections': 1, 'tau': 1e-2,
+            'steps': 256, 'sampler': 'pc', 'corrections': 1, 'tau': 1e-2,
             'clip_method': 'none'
         }
     )

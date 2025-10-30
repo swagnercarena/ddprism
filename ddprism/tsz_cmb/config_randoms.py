@@ -8,7 +8,7 @@ def get_config():
     config.rng_key = 0
 
     # Parameters for dataset generation
-    config.n_train = 32_768
+    config.n_train = 61_440
     config.map_norm = 2000.0
     config.data_max = 1.0
 

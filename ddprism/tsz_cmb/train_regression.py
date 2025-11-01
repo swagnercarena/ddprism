@@ -89,11 +89,11 @@ def apply_model(
 
 
 def match_filered_rmse(x_pred, sz_signal):
-    """Match filter the x_post and compute the rmse."""
+    """Match filter the x_pred and compute the rmse."""
     filters = sz_signal / (
-        jnp.sqrt(jnp.sum(jnp.square(sz_signal), axis=-2, keepdims=True))
+        jnp.sqrt(jnp.sum(jnp.square(sz_signal), axis=-1, keepdims=True))
     )
-    x_pred_matched = jnp.sum(x_pred * filters) * filters
+    x_pred_matched = jnp.sum(x_pred * filters, axis=-1, keepdims=True) * filters
     rmse_matched = jnp.sqrt(jnp.mean(jnp.square(x_pred_matched - sz_signal)))
     return rmse_matched
 

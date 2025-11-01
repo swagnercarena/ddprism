@@ -50,9 +50,9 @@ def apply_model_with_config(config):
 def match_filered_rmse(x_post, sz_no_noise):
     """Match filter the x_post and compute the rmse."""
     filters = sz_no_noise / (
-        jnp.sqrt(jnp.sum(jnp.square(sz_no_noise), axis=-2, keepdims=True))
+        jnp.sqrt(jnp.sum(jnp.square(sz_no_noise), axis=-1, keepdims=True))
     )
-    x_post_matched = jnp.sum(x_post * filters) * filters
+    x_post_matched = jnp.sum(x_post * filters, axis=-1, keepdims=True) * filters
     rmse_matched = jnp.sqrt(jnp.mean(jnp.square(x_post_matched - sz_no_noise)))
     return rmse_matched
 

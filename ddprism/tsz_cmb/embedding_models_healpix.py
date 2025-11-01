@@ -580,3 +580,346 @@ class FlatHEALPixTransformer(HEALPixTransformer):
     def feat_dim(self):
         """Get the feature dimension."""
         return self.healpix_shape[0] * self.healpix_shape[1]
+
+
+########################## MODELS FOR REGRESSION ###############################
+class RegressionHEALPixAttentionBlock(nn.Module):
+    """Transformer block for HEALPix CMB data without time conditioning.
+
+    Arguments:
+        emb_features: Dimension of the embedding.
+        n_heads: Number of heads in the attention mechanism.
+        dropout_rate: Dropout rate.
+        mlp_ratio: MLP expansion ratio.
+    """
+    emb_features: int
+    n_heads: int
+    dropout_rate: float
+    mlp_ratio: int = 4
+
+    @nn.compact
+    def __call__(
+        self, x:Array, relative_bias_logits:Array, train:bool=True
+    ) -> Array:
+        """Call the attention block.
+
+        Arguments:
+            x: Input map with shape (*, N, D).
+            relative_bias_logits: Relative bias logits with shape (*, N, N, H).
+            train: If true, values are passed in training mode.
+
+        Returns:
+            Output with shape (*, N, D).
+        """
+        # Shape checks
+        assert x.ndim >= 3, (
+            f"RegressionHEALPixAttentionBlock expects (..., N, D), got {x.shape}"
+        )
+        assert relative_bias_logits.ndim >= 4 and (
+            relative_bias_logits.shape[-1] == self.n_heads
+        ), (
+            f"relative_bias_logits must end with n_heads={self.n_heads},"
+            f" got {relative_bias_logits.shape}"
+        )
+
+        # Self-attention with pre-norm
+        y = nn.LayerNorm()(x)
+        y = HEALPixAttention(
+            self.emb_features, self.n_heads, self.dropout_rate
+        )(y, relative_bias_logits, train=train)
+        x = x + y
+
+        # Pointwise MLP with pre-norm
+        y = nn.LayerNorm()(x)
+        y = nn.Dense(self.emb_features * self.mlp_ratio)(y)
+        y = nn.gelu(y)
+        y = nn.Dropout(self.dropout_rate)(y, deterministic=not train)
+        y = nn.Dense(self.emb_features)(y)
+        y = nn.Dropout(self.dropout_rate)(y, deterministic=not train)
+        x = x + y
+
+        return x
+
+
+class RegressionHEALPixTransformer(nn.Module):
+    r"""Creates a HEALPix transformer for regression (no time conditioning).
+
+    Arguments:
+        emb_features: Dimension of the embedding.
+        n_blocks: Number of transformer blocks.
+        dropout_rate_block: Dropout rate for each transformer block.
+        heads: Number of heads in the attention mechanism.
+        patch_size_list: Size of each path to build an attention path for.
+        freq_features: Number of frequency features for the relative bias.
+        use_patch_convolution: If True, use a patch-wise convolution to average
+            the output of each patch at each scale before combining.
+        n_average_layers: Number of layers of convolutional smoothing to apply
+            to final output.
+    """
+    emb_features: int
+    n_blocks: int
+    dropout_rate_block: Sequence[float]
+    heads: int
+    patch_size_list: Sequence[int]
+    freq_features: int = 64
+    use_patch_convolution: bool = True
+    n_average_layers: int = 4
+
+    def setup(self):
+        self.relative_bias = RelativeBias(
+            self.heads, freq_features=self.freq_features
+        )
+        # Relative bias for patch averaging at the output
+        self.patch_relative_bias = RelativeBias(
+            1, freq_features=self.freq_features
+        )
+
+    @nn.compact
+    def __call__(
+        self, x: Array, vec_map: Array, train: bool = True
+    ) -> Array:
+        """Return the HEALPix transformer output.
+
+        Arguments:
+            x: Input map with shape (*, N, C).
+            vec_map: Vector direction map with shape (*, N, 3).
+            train: If true, values are passed in training mode.
+
+        Returns:
+            Output with shape (*, N, C).
+        """
+        # Basic input shape checks
+        assert x.ndim >= 3, (
+            f"RegressionHEALPixTransformer expects x with shape (..., N, C), got "
+            f"{x.shape}"
+        )
+        assert vec_map.ndim >= 3, (
+            f"RegressionHEALPixTransformer expects vec_map with shape (..., N, 3), "
+            f"got {vec_map.shape}"
+        )
+        assert vec_map.shape[:-1] == x.shape[:-1], (
+            f"vec_map batch dims {vec_map.shape[:-1]} must match x batch dims "
+            f"{x.shape[:-1]}"
+        )
+        assert vec_map.shape[-1] == 3, (
+            f"vec_map last dim must be 3, got {vec_map.shape}"
+        )
+        assert vec_map.shape[-2] == x.shape[-2], (
+            f"N mismatch between x and vec_map: {x.shape[-2]} vs "
+            f"{vec_map.shape[-2]}"
+        )
+
+        # Shape validations.
+        N, C = x.shape[-2:]
+        for patch_size in self.patch_size_list:
+            assert N % patch_size == 0, "N must be divisible by all patch_size"
+        assert len(self.dropout_rate_block) == self.n_blocks
+
+        # Start by patchifying the input map and embedding each patch.
+        x_list = [
+            rearrange(x, '... (N P) C -> ... N (P C)', P=patch_size)
+            for patch_size in self.patch_size_list
+        ]
+
+        # Set the vector of each patch to the average of the patches.
+        vec_map_patches = jnp.concatenate(
+            [
+                jnp.mean(
+                    rearrange(
+                        vec_map, '... (N P) V -> ... N P V', P=patch_size, V=3
+                    ),
+                    axis=-2
+                )
+                for patch_size in self.patch_size_list
+            ], axis=-2
+        )
+
+        # Compute the shared relative bias logits.
+        relative_bias_logits = self.relative_bias(vec_map_patches)
+
+        # Embed the input map to have dimension (B, N // patch_size, D) and add
+        # absolute positional embedding for each patch.
+        x = jnp.concatenate(
+            [nn.Dense(self.emb_features)(x) for x in x_list], axis=-2
+        )
+        assert x.shape[-1] == self.emb_features
+        pos_embedding = jnp.concatenate(
+            [
+                self.param(
+                    f"pos_embedding_{i}",
+                    nn.initializers.normal(stddev=0.02),
+                    (N // self.patch_size_list[i], self.emb_features)
+                ) for i in range(len(self.patch_size_list))
+            ], axis=-2
+        )
+        # Positional embedding broadcast check
+        pos_broadcast = jnp.broadcast_to(pos_embedding, x.shape)
+        assert pos_broadcast.shape == x.shape, (
+            f"positional embedding broadcast failed: {pos_broadcast.shape} vs "
+            f"x {x.shape}"
+        )
+        x = x + pos_broadcast
+
+        for i in range(self.n_blocks):
+            x = RegressionHEALPixAttentionBlock(
+                self.emb_features, self.heads,
+                self.dropout_rate_block[i]
+            )(x, relative_bias_logits, train=train)
+
+        # Decode back to patch space.
+        x = nn.LayerNorm()(x)
+
+        # Break up into individual patches again.
+        n_patches = [N // patch_size for patch_size in self.patch_size_list]
+        sections = np.cumsum(n_patches)[:-1].tolist()
+        x_list = jnp.split(x, sections, axis=-2)
+        x_list = [
+            nn.Dense(patch_size * C)(x)
+            for patch_size, x in zip(self.patch_size_list, x_list)
+        ]
+        for i in range(len(self.patch_size_list)):
+            assert x_list[i].shape[-2] == n_patches[i], (
+                f"x_list[{i}] shape {x_list[i].shape} must match n_patches[{i}]"
+                f" {n_patches[i]}"
+            )
+            assert x_list[i].shape[-1] == self.patch_size_list[i] * C, (
+                f"x_list[{i}] shape {x_list[i].shape} must match "
+                f"{self.patch_size_list[i]*C}"
+            )
+
+        # Average each patch representation by all patches weighted by relative
+        # bias. This is a healpix convolutional operation for final smoothing.
+        # Split vec_map_patches into separate groups for each patch size.
+        vec_map_patches_list = jnp.split(vec_map_patches, sections, axis=-2)
+
+        if self.use_patch_convolution:
+            # Apply relative bias weighted averaging separately for each patch
+            # size group with skip connection.
+            x_list_with_skip = []
+            for vec_patches, x_patches in zip(vec_map_patches_list, x_list):
+                # Compute relative bias for this patch size group.
+                patch_bias_logits = self.patch_relative_bias(vec_patches)
+                # patch_bias_logits has shape (..., n_patches[i], n_patches[i], 1)
+                patch_bias_logits = patch_bias_logits.squeeze(axis=-1)
+                # Apply softmax to get attention weights
+                patch_weights = nn.softmax(patch_bias_logits, axis=-1)
+                x_averaged = jnp.einsum(
+                    '...NM,...MP->...NP', patch_weights, x_patches
+                )
+                # Add skip connection
+                x_list_with_skip.append(x_averaged + x_patches)
+
+            x_list = x_list_with_skip
+
+        # Weighted average of the prediction for each pixel.
+        x_list = jnp.stack(
+            [
+                rearrange(x, '... N (P C) -> ... (N P) C', P=patch_size)
+                for patch_size, x in zip(self.patch_size_list, x_list)
+            ], axis=-1
+        )
+        x = nn.Dense(1)(x_list).squeeze(axis=-1)
+
+        if self.n_average_layers > 0:
+            # Do a neighbor averaging operation to avoid edge effects between
+            # patches. Ideally this would be aware of angular distance between
+            # pixels, but that's not currently implemented.
+            nside = int(np.sqrt(x.shape[-2]))
+            # Temporary 2d array for concolution.
+            x_twod = rearrange(
+                jnp.zeros_like(x), '... (N M) C -> ... N M C', N=nside, M=nside
+            )
+            x_coords, y_coords = nest_to_xy(nside, np.arange(nside*nside))
+            x_twod = x_twod.at[...,x_coords,y_coords,:].set(x)
+
+            # Convolutional layers.
+            for i in range(self.n_average_layers):
+                x_twod = nn.Conv(
+                    x.shape[-1], kernel_size=(5,5), strides=(1,1),
+                    padding='SAME'
+                )(x_twod)
+                x_twod = nn.LayerNorm()(x_twod)
+                x_twod = nn.silu(x_twod)
+            x_twod = nn.Conv(
+                x.shape[-1], kernel_size=(5,5), strides=(1,1), padding='SAME'
+            )(x_twod)
+
+            # Verify spatial dimensions haven't been reduced.
+            assert x_twod.shape[-3] == nside and x_twod.shape[-2] == nside, (
+                f"x_twod spatial dimensions must remain {nside}x{nside}, "
+                f"got {x_twod.shape[-3]}x{x_twod.shape[-2]}"
+            )
+
+            # Add back to the original array.
+            x = x + x_twod[...,x_coords,y_coords,:]
+
+        return x
+
+
+class FlatRegressionHEALPixTransformer(RegressionHEALPixTransformer):
+    """Wrapper class for dealing with (channel) flattened HEALPix data.
+
+    Arguments:
+        emb_features: Dimension of the embedding.
+        n_blocks: Number of transformer blocks.
+        dropout_rate_block: Dropout rate for each transformer block.
+        heads: Number of heads in the attention mechanism.
+        patch_size_list: Size of each path to build an attention path for.
+        freq_features: Number of frequency features for the relative bias.
+        n_average_layers: Number of layers of convolutional smoothing to apply
+            to final output.
+        healpix_shape: Healpix shape with the number of channels.
+    """
+    healpix_shape: Sequence[int] = None
+
+    def setup(self):
+        # Check image shape meets the requirements.
+        assert self.healpix_shape is not None
+        assert len(self.healpix_shape) == 2
+        super().setup()
+
+    @nn.compact
+    def __call__(
+        self, x: Array, vec_map: Array, train: bool = True
+    ) -> Array:
+        """Reshape image for transformer call and then reflatten.
+
+        Arguments:
+            x: Input image with shape (*, (N C)).
+            vec_map: Vector direction map with shape (*, N, 3).
+            train: If true, values are passed in training mode.
+
+        Returns:
+            Output with shape (*, (N C)).
+        """
+        # Unflatten x.
+        x = self.reshape(x)
+        x = super().__call__(x, vec_map, train)
+        # Flatten.
+        x = rearrange(x, '... N C -> ... (N C)')
+
+        return x
+
+    def reshape(self, x:Array) -> Array:
+        """Reshape flattened image.
+
+        Arguments:
+            x: Input image with shape (*, (N C)).
+
+        Returns:
+            Input image with shape (*, N, C).
+        """
+        # Validate flat feature dimension matches N*C
+        assert x.shape[-1] == self.healpix_shape[0] * self.healpix_shape[1], (
+            f"FlatRegressionHEALPixTransformer.reshape expected last dim "
+            f"N*C={self.healpix_shape[0]*self.healpix_shape[1]}, got {x.shape}"
+        )
+        return rearrange(
+            x, '... (N C) -> ... N C',
+            N=self.healpix_shape[0], C=self.healpix_shape[1]
+        )
+
+    @property
+    def feat_dim(self):
+        """Get the feature dimension."""
+        return self.healpix_shape[0] * self.healpix_shape[1]

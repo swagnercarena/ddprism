@@ -72,8 +72,8 @@ update_model = jax.pmap( # pylint: disable=invalid-name
 
 
 def create_posterior_train_state(
-    rng, config, healpix_shapes, feat_dim,  mu_x=None, cov_x=None,
-    gaussian=False
+    rng, config, config_randoms, healpix_shapes, feat_dim,  mu_x=None,
+    cov_x=None, gaussian=False
 ):
     "Create joint posterior denoiser."
     # Learning rate is irrelevant for the posterior denoiser because we don't
@@ -83,7 +83,9 @@ def create_posterior_train_state(
     )
 
     denoiser_models = [
-        training_utils_healpix.create_denoiser_transformer(config, hp_shape)
+        training_utils_healpix.create_denoiser_transformer(
+            config_randoms, hp_shape
+        )
         for hp_shape in healpix_shapes[:-1]
     ]
     if gaussian:
@@ -160,7 +162,6 @@ def main(_):
     )
 
     # Load the relevant information for the randoms model.
-    randoms_workdir = FLAGS.randoms_workdir
     checkpoint_manager = CheckpointManager(
         os.path.join(randoms_workdir, 'checkpoints'), checkpointer,
         options=checkpoint_options
@@ -189,7 +190,6 @@ def main(_):
     )
     vec_map_flat = rearrange(vec_map, 'B P S N V -> (B P S) N V')
 
-    # TODO: Load the true signal for metrics and flatten for metrics.
     sz_no_noise, _, _, _ = load_datasets.load_sz(
         config, sz_no_noise_path
     )
@@ -206,7 +206,7 @@ def main(_):
     # Initialize our Gaussian state.
     rng_state, rng = jax.random.split(rng)
     post_state_transformer = create_posterior_train_state(
-        rng_state, config, healpix_shapes, feat_dim,
+        rng_state, config, config_randoms, healpix_shapes, feat_dim,
         gaussian=True
     )
     post_state_params = post_state_transformer.params
@@ -302,7 +302,7 @@ def main(_):
     state_transformer = jax_utils.replicate(state_transformer)
 
     post_state_transformer = create_posterior_train_state(
-        rng_state, config, healpix_shapes, feat_dim,
+        rng_state, config, config_randoms, healpix_shapes, feat_dim,
     )
     post_state_transformer = jax_utils.replicate(post_state_transformer)
     ema = training_utils.EMA(jax_utils.unreplicate(state_transformer).params)

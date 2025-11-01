@@ -26,6 +26,7 @@ def get_config():
     # Training parameters
     config.epochs = 128
     config.batch_size = 128
+    config.sample_batch_size = 1 # Does nothing.
     config.lr_init_val = 1e-3
     config.grad_clip_norm = 1.0
     config.optimizer = ConfigDict({

@@ -88,6 +88,16 @@ def apply_model(
     return grads, loss
 
 
+def match_filered_rmse(x_pred, sz_signal):
+    """Match filter the x_post and compute the rmse."""
+    filters = sz_signal / (
+        jnp.sqrt(jnp.sum(jnp.square(sz_signal), axis=-2, keepdims=True))
+    )
+    x_pred_matched = jnp.sum(x_pred * filters) * filters
+    rmse_matched = jnp.sqrt(jnp.mean(jnp.square(x_pred_matched - sz_signal)))
+    return rmse_matched
+
+
 def eval_model(state, observed_map, sz_signal, vec_map, params):
     """Compute predictions and loss for evaluation (no gradients)."""
     # Forward pass through the model
@@ -100,12 +110,14 @@ def eval_model(state, observed_map, sz_signal, vec_map, params):
 
     # Compute metrics
     rmse = jnp.sqrt(jnp.mean(jnp.square(x_pred - sz_signal)))
+    rmse_matched = match_filered_rmse(x_pred, sz_signal)
 
     # Average across devices
     loss = jax.lax.pmean(loss, axis_name='batch')
     rmse = jax.lax.pmean(rmse, axis_name='batch')
+    rmse_matched = jax.lax.pmean(rmse_matched, axis_name='batch')
 
-    return loss, rmse
+    return loss, rmse, rmse_matched
 
 
 # Create pmapped functions
@@ -220,6 +232,7 @@ def main(_):
         ema_params_replicated = jax_utils.replicate(ema.params)
         val_losses = []
         val_rmses = []
+        val_rmses_matched = []
 
         for val_batch_idx in range(n_val_batches):
             # Get validation batch
@@ -236,18 +249,24 @@ def main(_):
             vec_map_val_batch = vec_map_val[batch_indices]
 
             # Evaluate with EMA params
-            val_loss, val_rmse = eval_model_pmap(
+            val_loss, val_rmse, val_rmse_matched = eval_model_pmap(
                 state, sz_obs_val_batch, sz_signal_val_batch,
                 vec_map_val_batch, ema_params_replicated
             )
 
             val_losses.append(jax_utils.unreplicate(val_loss))
             val_rmses.append(jax_utils.unreplicate(val_rmse))
+            val_rmses_matched.append(jax_utils.unreplicate(val_rmse_matched))
 
         # Average metrics over all validation batches
         avg_val_loss = jnp.mean(jnp.array(val_losses))
         avg_val_rmse = jnp.mean(jnp.array(val_rmses))
-        metrics_dict = {'eval_loss': avg_val_loss, 'eval_rmse': avg_val_rmse}
+        avg_val_rmse_matched = jnp.mean(jnp.array(val_rmses_matched))
+        metrics_dict = {
+            'eval_loss': avg_val_loss,
+            'eval_rmse': avg_val_rmse,
+            'eval_rmse_matched': avg_val_rmse_matched
+        }
         wandb.log(metrics_dict, commit=False)
 
         ckpt = {

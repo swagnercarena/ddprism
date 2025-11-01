@@ -11,7 +11,7 @@ def get_config():
 
     # Data parameters
     config.n_train = 61_440  # Number of training samples
-    config.n_val = 1024  # Number of validation samples
+    config.n_val = 8192  # Number of validation samples
     config.map_norm = 2000.0
     config.data_max = 1.0
 

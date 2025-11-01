@@ -165,6 +165,14 @@ def main(_):
     sz_clean_flat = rearrange(sz_clean, 'B P S (NC) -> (B P S) (NC)')
     vec_map_flat = rearrange(vec_map, 'B P S N V -> (B P S) N V')
 
+    # Shuffle all data before splitting (with fixed seed for reproducibility)
+    rng_split, rng = jax.random.split(rng)
+    n_total = sz_obs_flat.shape[0]
+    perm_all = jax.random.permutation(rng_split, n_total)
+    sz_obs_flat = sz_obs_flat[perm_all]
+    sz_clean_flat = sz_clean_flat[perm_all]
+    vec_map_flat = vec_map_flat[perm_all]
+
     # Split into training and validation sets based on n_val.
     sz_obs_train, sz_obs_val = (
         sz_obs_flat[:-config.n_val], sz_obs_flat[-config.n_val:]

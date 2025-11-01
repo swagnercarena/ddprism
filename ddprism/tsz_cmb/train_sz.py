@@ -47,10 +47,23 @@ def apply_model_with_config(config):
     )
 
 
+def match_filered_rmse(x_post, sz_no_noise):
+    """Match filter the x_post and compute the rmse."""
+    filters = sz_no_noise / (
+        jnp.sqrt(jnp.sum(jnp.square(sz_no_noise), axis=-2, keepdims=True))
+    )
+    x_post_matched = jnp.sum(x_post * filters) * filters
+    rmse_matched = jnp.sqrt(jnp.mean(jnp.square(x_post_matched - sz_no_noise)))
+    return rmse_matched
+
+
 def compute_metrics_for_samples(x_post, sz_no_noise):
     """Compute metrics for randoms samples."""
     rmse = jnp.sqrt(jnp.mean(jnp.square(x_post - sz_no_noise)))
-    return {'rmse_sz': rmse}
+    return {
+        'rmse_sz': rmse,
+        'rmse_matched': match_filered_rmse(x_post, sz_no_noise)
+    }
 
 
 update_model = jax.pmap( # pylint: disable=invalid-name

@@ -28,10 +28,10 @@ config_flags.DEFINE_config_file(
 )
 
 
-def create_regression_state(rng, config, healpix_shape):
+def create_regression_state(rng, config, healpix_shape, n_batches):
     """Create train state for regression model."""
     learning_rate_fn = training_utils.get_learning_rate_schedule(
-        config, config.lr_init_val, config.epochs
+        config, config.lr_init_val, config.epochs * n_batches
     )
 
     # Create the regression-specific HealpixTransformer model (no time conditioning)
@@ -188,9 +188,16 @@ def main(_):
     # TODO: Hardcoded! Assumes 3 channels
     healpix_shape = (sz_obs_flat.shape[-1] // 3, 3)
 
+    # Set number of batches
+    n_samples = sz_obs_train.shape[0]
+    n_batches = n_samples // (jax.local_device_count() * config.batch_size)
+    n_val_batches = config.n_val // (
+        jax.local_device_count() * config.batch_size
+    )
+
     # Initialize the regression state
     rng_state, rng = jax.random.split(rng)
-    state = create_regression_state(rng_state, config, healpix_shape)
+    state = create_regression_state(rng_state, config, healpix_shape, n_batches)
     state = jax_utils.replicate(state)
 
     # Initialize EMA for better generalization
@@ -198,11 +205,6 @@ def main(_):
 
     # Training loop
     print('Beginning training.')
-    n_samples = sz_obs_train.shape[0]
-    n_batches = n_samples // (jax.local_device_count() * config.batch_size)
-    n_val_batches = config.n_val // (
-        jax.local_device_count() * config.batch_size
-    )
 
     for epoch in tqdm(range(config.epochs), desc='Epoch'):
         # Shuffle the data

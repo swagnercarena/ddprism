@@ -1,4 +1,5 @@
 "Train a regression model to denoise SZ maps."
+import gc
 import os
 
 from absl import app, flags
@@ -165,28 +166,34 @@ def main(_):
     sz_clean_flat = rearrange(sz_clean, 'B P S (NC) -> (B P S) (NC)')
     vec_map_flat = rearrange(vec_map, 'B P S N V -> (B P S) N V')
 
+    # Delete original arrays to free memory
+    del sz_obs, sz_clean, vec_map
+    gc.collect()
+
     # Shuffle all data before splitting (with fixed seed for reproducibility)
     rng_split, rng = jax.random.split(rng)
     n_total = sz_obs_flat.shape[0]
     perm_all = jax.random.permutation(rng_split, n_total)
-    sz_obs_flat = sz_obs_flat[perm_all]
-    sz_clean_flat = sz_clean_flat[perm_all]
-    vec_map_flat = vec_map_flat[perm_all]
 
-    # Split into training and validation sets based on n_val.
-    sz_obs_train, sz_obs_val = (
-        sz_obs_flat[:-config.n_val], sz_obs_flat[-config.n_val:]
-    )
-    sz_clean_train, sz_clean_val = (
-        sz_clean_flat[:-config.n_val], sz_clean_flat[-config.n_val:]
-    )
-    vec_map_train, vec_map_val = (
-        vec_map_flat[:-config.n_val], vec_map_flat[-config.n_val:]
-    )
+    # Split indices into train/val without creating intermediate permuted copies
+    train_indices = perm_all[:-config.n_val]
+    val_indices = perm_all[-config.n_val:]
+
+    # Use indices to create train/val splits directly
+    sz_obs_train = sz_obs_flat[train_indices]
+    sz_obs_val = sz_obs_flat[val_indices]
+    sz_clean_train = sz_clean_flat[train_indices]
+    sz_clean_val = sz_clean_flat[val_indices]
+    vec_map_train = vec_map_flat[train_indices]
+    vec_map_val = vec_map_flat[val_indices]
 
     # Set healpix shape
     # TODO: Hardcoded! Assumes 3 channels
-    healpix_shape = (sz_obs_flat.shape[-1] // 3, 3)
+    healpix_shape = (sz_obs_train.shape[-1] // 3, 3)
+
+    # Delete flat arrays and indices to free memory
+    del sz_obs_flat, sz_clean_flat, vec_map_flat
+    gc.collect()
 
     # Set number of batches
     n_samples = sz_obs_train.shape[0]

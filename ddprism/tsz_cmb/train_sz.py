@@ -1,5 +1,6 @@
 "Train a diffusion model on the random dataset."
 import functools
+import gc
 import os
 
 from absl import app, flags
@@ -177,6 +178,10 @@ def main(_):
     config_randoms = ConfigDict(restore['config'])
     checkpoint_manager.close()
 
+    # Delete checkpoint restore dict to free memory
+    del restore
+    gc.collect()
+
     # Switch to the working directory for the sz model.
     checkpoint_manager = CheckpointManager(
         os.path.join(workdir, 'checkpoints'), checkpointer,
@@ -194,6 +199,9 @@ def main(_):
         config, sz_no_noise_path
     )
     sz_no_noise = rearrange(sz_no_noise, 'B P S (NC) -> (B P S) (NC)')
+
+    # Delete old copy of sz_no_noise to free memory
+    gc.collect()
 
     # Set dimension for posterior sampling.
     # TODO: Hardcoded!
@@ -281,6 +289,7 @@ def main(_):
         post_state_params_single['denoiser_models_1']['cov_x'] = sz_cov
         post_state_params = jax_utils.replicate(post_state_params_single)
         del post_state_params_single
+        gc.collect()
 
     metrics_dict = compute_metrics_for_samples(x_post[1], sz_no_noise)
     wandb.log(metrics_dict, commit=False)

@@ -1,5 +1,6 @@
 "Train a diffusion model on the random dataset."
 import functools
+import gc
 import os
 
 from absl import app, flags
@@ -148,6 +149,9 @@ def main(_):
         config, randoms_no_noise_path
     )
     rand_no_noise = rearrange(rand_no_noise, 'B P S (NC) -> (B P S) (NC)')
+
+    # Clean up old copy of rand_no_noise to free memory
+    gc.collect()
 
     # Set dimension for posterior sampling.
     # TODO: Hardcoded!

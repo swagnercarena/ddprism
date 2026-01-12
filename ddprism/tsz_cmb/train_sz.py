@@ -217,12 +217,11 @@ def main(_):
         rng_state, config, config_randoms, healpix_shapes, feat_dim,
         gaussian=True
     )
+    # Store params (will be modified in loop)
     post_state_params = post_state_transformer.params
-    post_state_params['denoiser_models_0'] = randoms_params
 
     # Prepare post_state_gauss for pmap.
     post_state_transformer = jax_utils.replicate(post_state_transformer)
-    post_state_params = jax_utils.replicate(post_state_params)
 
     # Create our sampling function. We want to pmap it, but we also have to
     # batch to avoid memory issues. Start with the pmapped call to sample.
@@ -265,16 +264,24 @@ def main(_):
         # Loop over the sampling batches, saving the outputs to cpu to avoid
         # memory issues.
         x_post = []
+        params = {
+            'denoiser_models_0': randoms_params,
+            'denoiser_models_1': post_state_params['denoiser_models_1']
+        }
+        params = jax_utils.replicate(params)
 
         for sz_batch, vec_batch, rng_pmap in zip(sz_obs, vec_map, rng_samp):
             x_post.append(
-                sample_pmap(
-                    sz_batch, rng_pmap, post_state_transformer,
-                    post_state_params, A_mat, cov_y, vec_batch
+                jax.device_put(
+                    sample_pmap(
+                        sz_batch, rng_pmap, post_state_transformer,
+                        params, A_mat, cov_y, vec_batch
+                    ),
+                    jax.local_devices(backend="cpu")[0]
                 )
             )
 
-        # No longer need sampling dimensions for training the state.
+        # Stack and process on CPU device
         x_post = rearrange(
             jnp.stack(x_post, axis=0), 'K M N ... -> (K M N) ...'
         )
@@ -284,18 +291,14 @@ def main(_):
         # Get the statistics of the separate grass sample.
         rng_ppca, rng = jax.random.split(rng)
         sz_mean, sz_cov = utils.ppca(rng_ppca, x_post[1], rank=2)
-        post_state_params_single = jax_utils.unreplicate(post_state_params)
-        post_state_params_single['denoiser_models_1']['mu_x'] = sz_mean
-        post_state_params_single['denoiser_models_1']['cov_x'] = sz_cov
-        post_state_params = jax_utils.replicate(post_state_params_single)
-        del post_state_params_single
-        gc.collect()
+        post_state_params['denoiser_models_1']['mu_x'] = sz_mean
+        post_state_params['denoiser_models_1']['cov_x'] = sz_cov
 
     metrics_dict = compute_metrics_for_samples(x_post[1], sz_no_noise)
     wandb.log(metrics_dict, commit=False)
 
     # Save our initial samples.
-    ckpt = {'x_post': jax.device_get(x_post), 'config': config.to_dict()}
+    ckpt = {'x_post': x_post, 'config': config.to_dict()}
     save_args = orbax_utils.save_args_from_target(ckpt)
     checkpoint_manager.save(0, ckpt, save_kwargs={'save_args': save_args})
     checkpoint_manager.wait_until_finished()
@@ -377,12 +380,16 @@ def main(_):
             sz_obs, vec_map, rng_samp
         ):
             x_post.append(
-                sample_pmap(
-                    sz_batch, rng_pmap, post_state_transformer,
-                    post_state_params, A_mat, cov_y, vec_batch
+                jax.device_put(
+                    sample_pmap(
+                        sz_batch, rng_pmap, post_state_transformer,
+                        post_state_params, A_mat, cov_y, vec_batch
+                    ),
+                    jax.local_devices(backend="cpu")[0]
                 )
             )
-        # No longer need sampling dimensions for training the state.
+
+        # Stack and process on CPU device
         x_post = rearrange(
             jnp.stack(x_post, axis=0), 'K M N ... -> (K M N) ...'
         )
@@ -396,7 +403,7 @@ def main(_):
         # Save the state, ema, and some samples.
         ckpt = {
             'state': jax.device_get(jax_utils.unreplicate(state_transformer)),
-            'x_post': jax.device_get(x_post),
+            'x_post': x_post,
             'ema_params': jax.device_get(ema.params),
             'config': config.to_dict(),
             'metrics_post': jax.device_get(metrics_dict_post),

@@ -3,6 +3,8 @@ import functools
 import gc
 import os
 
+import numpy as np
+
 from absl import app, flags
 from einops import rearrange
 from flax import jax_utils
@@ -333,6 +335,8 @@ def main(_):
     )
 
     print('Beginning EM laps for diffusion model fitting.')
+    x_post_np = np.array(x_post[1])
+    vec_map_np = np.array(vec_map_flat)
     for lap in tqdm(range(config.em_laps), desc='EM Lap'):
         # Training laps between samples.
         pbar = tqdm(range(config.epochs), desc='Epoch', leave=False)
@@ -345,8 +349,11 @@ def main(_):
             )
 
             rng_apply = jax.random.split(rng_apply, jax.local_device_count())
+            batch_i_np = np.array(batch_i)
+            batch_x = jax.device_put(x_post_np[batch_i_np])
+            batch_vec = jax.device_put(vec_map_np[batch_i_np])
             grads, loss = apply_model( # pylint: disable=not-callable
-                state_transformer, x_post[1][batch_i], vec_map_flat[batch_i],
+                state_transformer, batch_x, batch_vec,
                 rng_apply
             )
             state_transformer = update_model( # pylint: disable=not-callable
@@ -395,6 +402,8 @@ def main(_):
         )
         x_post = jnp.clip(x_post, -config.data_max, config.data_max)
         x_post = jnp.split(x_post, 2, axis=-1)
+
+        x_post_np = np.array(x_post[1])
 
         # Calculate and log metrics for our posterior sample.
         metrics_dict_post = compute_metrics_for_samples(x_post[1], sz_no_noise)

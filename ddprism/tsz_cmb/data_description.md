@@ -13,15 +13,15 @@ All data lives on CephFS under `/mnt/home/abayer/ceph/fastpm/halfdome/`.
 ```
 
 - Default seed: `100`
-- HDF5 datasets: `Position` (Cartesian xyz, shape `(N, 3)`), `halo_mass_m200c` (solar masses)
-- We apply a mass cut of `2e14` M_sun and sort descending by mass
+- HDF5 datasets: `Position` (Cartesian xyz, shape `(N, 3)`), `halo_mass_m200c` (Msun/h)
+- We apply a mass cut of `2e14` Msun/h and sort descending by mass
 
 Reading example:
 ```python
 import h5py
 with h5py.File('/mnt/home/abayer/ceph/fastpm/halfdome/stampede2_3750Mpch_6144cube/final_res/halos/lightcone_100.hdf5', 'r') as f:
     pos = f['Position'][:]       # shape (N, 3), Cartesian unit vectors
-    mass = f['halo_mass_m200c'][:] # shape (N,), in solar masses
+    mass = f['halo_mass_m200c'][:] # shape (N,), in Msun/h
 ```
 
 ### HEALPix maps (input FITS files)

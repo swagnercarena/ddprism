@@ -20,7 +20,7 @@ Reading example:
 ```python
 import h5py
 with h5py.File('/mnt/home/abayer/ceph/fastpm/halfdome/stampede2_3750Mpch_6144cube/final_res/halos/lightcone_100.hdf5', 'r') as f:
-    pos = f['Position'][:]       # shape (N, 3), Cartesian unit vectors
+    pos = f['Position'][:]       # shape (N, 3), Cartesian coordinates
     mass = f['halo_mass_m200c'][:] # shape (N,), in Msun/h
 ```
 
@@ -115,6 +115,32 @@ with h5py.File('T_tot_patches_noise7_s100_fwhm2_random_False.h5', 'r') as f:
 - `patches` pixel dimension is `num_pixels**2` (default 4096 = 64x64) and has been reordered into a standard nested ordering via `reorder_diamond()`
 - `vecs` contains 3D unit vectors from `healpy.pix2vec()` for each pixel -- used as positional information by the transformer model
 - To reshape patches into a 2D image: `patch_2d = patches[i].reshape(num_pixels, num_pixels, n_freqs)`
+
+### Additional patch types
+
+#### NILC patches
+
+```
+/mnt/home/abayer/ceph/fastpm/halfdome/oneweek/final/{profile_str}/patches_nilc/
+```
+
+Available for `b16`, `b16g7`, and `b16g7rel`. Patches extracted from a Needlet Internal Linear Combination (NILC) reconstruction of the Compton-y map (produced by pyILC). Note: the NILC y-to-temperature conversion uses the non-relativistic formula even for `b16g7rel`.
+
+Contains:
+- `dT_tsz.h5` -- NILC-reconstructed tSZ signal converted to multi-frequency temperature (`patches` shape `(N, 4096, 3)`); also contains a `y` dataset (`(N, 4096)`) with the NILC-reconstructed Compton-y values per pixel
+
+#### 1-halo patches
+
+```
+/mnt/home/abayer/ceph/fastpm/halfdome/oneweek/final/{profile_str}/patches_1halo/
+```
+
+Available for `b16`, `b16g7`, and `b16g7rel`. Each halo's isolated tSZ signal (all other halos contributing to the patch removed). Useful for studying isolated halo profiles. ~61k halos per profile.
+
+Contains:
+- `dT_tsz.h5` -- all halos in one file, `patches` shape `(N, 4096, 3)`, plus a `y` dataset `(N, 4096)` with Compton-y values. Indexed by mass-rank (0 = most massive).
+
+Both patch types share the same HDF5 layout as the main patches (datasets: `patches`, `vecs`, `mass`, `id`; attributes: `nside`, `num_pixels=64`).
 
 ## Training data flow
 

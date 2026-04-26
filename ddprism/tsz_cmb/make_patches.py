@@ -1,4 +1,5 @@
 """Functions for making patches around halos."""
+from __future__ import annotations
 import os
 import argparse
 from functools import lru_cache
@@ -282,14 +283,23 @@ def generate_patches(
     # Load maps.
     print(f"\nLoading maps at frequencies: {freqs}")
     maps = []
-    for f in freqs:
-        map_file = map_name % f
-        print(f"  Loading {map_file}...")
+    if len(freqs) == 0:
+        print(f"  Loading {map_name}...")
         maps.append(
             hp.read_map(
-                map_file, dtype=np.float32, memmap=False, nest=True
+                map_name, dtype=np.float32, memmap=False, nest=True
             )
         )
+    else:
+        for f in freqs:
+            map_file = map_name % f
+            print(f"  Loading {map_file}...")
+            maps.append(
+                hp.read_map(
+                    map_file, dtype=np.float32, memmap=False, nest=True
+                )
+            )
+
     nside = hp.get_nside(maps[0])
     maps = np.stack(maps, axis=-1)
     print(f"Maps loaded successfully. nside={nside}, shape={maps.shape}")

@@ -11,20 +11,30 @@ import numpy as np
 from ddprism import linalg
 
 
-def _face_safe_indices(
+def _polar_polar_safe_indices(
     vecs: np.ndarray, nside: int, block: int
 ) -> np.ndarray:
-    """Indices of face-internal patches, truncated to a multiple of block.
+    """Indices of patches that do not cross a polar-polar HEALPix seam.
 
-    vecs is shape (N, n_pix, 3). A face-internal patch is one whose pixels
-    all live in the same HEALPix base face -- patches that span two faces
-    have spatial neighbors broken across the seam after reorder_diamond.
+    HEALPix has 24 base-face boundaries: 8 polar-polar (between adjacent
+    polar caps, terminating at the pole) and 16 polar-equatorial. Only
+    polar-polar boundaries break reorder_diamond -- the pole is a
+    degenerate corner where pixels have only 7 neighbors and the
+    NEST/Morton ordering can't bridge the seam, producing ~30 arcmin
+    jumps between supposedly-adjacent pixels in the reordered patch.
+    Polar-equatorial crossings have a clean 8-neighbor structure and
+    measured neighbor disruption indistinguishable from face-internal
+    patches (~3 arcmin), so we keep them. The kept list is truncated to
+    a multiple of block.
     """
     shift = 2 * int(np.log2(nside))
     pix = hp.vec2pix(nside, vecs[..., 0], vecs[..., 1], vecs[..., 2], nest=True)
     face = pix >> shift
-    safe = (face == face[:, :1]).all(axis=1)
-    keep = np.where(safe)[0]
+    is_face_crossing = (face != face[:, :1]).any(axis=1)
+    all_north = (face < 4).all(axis=1)
+    all_south = (face >= 8).all(axis=1)
+    is_polar_polar = is_face_crossing & (all_north | all_south)
+    keep = np.where(~is_polar_polar)[0]
     return keep[: (len(keep) // block) * block]
 
 def load_randoms(
@@ -44,7 +54,7 @@ def load_randoms(
         nside = int(f.attrs['nside'])
 
     if config.get('face_safe_filter', True):
-        idx = _face_safe_indices(np.asarray(vec_map), nside, block)
+        idx = _polar_polar_safe_indices(np.asarray(vec_map), nside, block)
         print(
             f'load_randoms: face_safe_filter kept {len(idx)}/{config.n_train}'
         )
@@ -97,7 +107,7 @@ def load_sz(
         nside = int(f.attrs['nside'])
 
     if config.get('face_safe_filter', True):
-        idx = _face_safe_indices(np.asarray(vec_map), nside, block)
+        idx = _polar_polar_safe_indices(np.asarray(vec_map), nside, block)
         print(f'load_sz: face_safe_filter kept {len(idx)}/{config.n_train}')
         sz_obs = sz_obs[idx]
         vec_map = vec_map[idx]

@@ -213,11 +213,12 @@ def main(_):
         [hp_shape[0] * hp_shape[1] for hp_shape in healpix_shapes]
     )
 
-    # Initialize our Gaussian state.
+    # Initialize our Gaussian state. Override mu_x with zeros.
     rng_state, rng = jax.random.split(rng)
     post_state_transformer = create_posterior_train_state(
         rng_state, config, config_randoms, healpix_shapes, feat_dim,
-        gaussian=True
+        mu_x=jnp.zeros(feat_dim),
+        gaussian=True,
     )
     # Store params (will be modified in loop)
     post_state_params = post_state_transformer.params

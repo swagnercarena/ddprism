@@ -3,19 +3,53 @@ from typing import Tuple
 
 from einops import rearrange
 import h5py
+import healpy as hp
 import jax
 import jax.numpy as jnp
+import numpy as np
 
 from ddprism import linalg
+
+
+def _face_safe_indices(
+    vecs: np.ndarray, nside: int, block: int
+) -> np.ndarray:
+    """Indices of face-internal patches, truncated to a multiple of block.
+
+    vecs is shape (N, n_pix, 3). A face-internal patch is one whose pixels
+    all live in the same HEALPix base face -- patches that span two faces
+    have spatial neighbors broken across the seam after reorder_diamond.
+    """
+    shift = 2 * int(np.log2(nside))
+    pix = hp.vec2pix(nside, vecs[..., 0], vecs[..., 1], vecs[..., 2], nest=True)
+    face = pix >> shift
+    safe = (face == face[:, :1]).all(axis=1)
+    keep = np.where(safe)[0]
+    return keep[: (len(keep) // block) * block]
 
 def load_randoms(
     config: dict, randoms_path: str
 ) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray]:
-    """Load a randoms dataset."""
+    """Load a randoms dataset.
 
+    If config.face_safe_filter is true (default), drop patches whose
+    pixels span more than one HEALPix base face -- those have scrambled
+    spatial neighbor structure after reorder_diamond and corrupt the
+    transformer's local geometry assumptions.
+    """
+    block = jax.device_count() * config.sample_batch_size
     with h5py.File(randoms_path, 'r') as f:
         rand_obs = jnp.array(f['patches'][:config.n_train])
         vec_map = jnp.array(f['vecs'][:config.n_train])
+        nside = int(f.attrs['nside'])
+
+    if config.get('face_safe_filter', True):
+        idx = _face_safe_indices(np.asarray(vec_map), nside, block)
+        print(
+            f'load_randoms: face_safe_filter kept {len(idx)}/{config.n_train}'
+        )
+        rand_obs = rand_obs[idx]
+        vec_map = vec_map[idx]
 
     # Transform to the desired dimensions.
     rand_obs = rearrange(
@@ -52,11 +86,21 @@ def load_randoms(
 def load_sz(
     config: dict, sz_path: str
 ) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray]:
-    """Load a sz dataset."""
+    """Load a sz dataset.
 
+    Same face-safe filtering as load_randoms: see its docstring.
+    """
+    block = jax.device_count() * config.sample_batch_size
     with h5py.File(sz_path, 'r') as f:
         sz_obs = jnp.array(f['patches'][:config.n_train])
         vec_map = jnp.array(f['vecs'][:config.n_train])
+        nside = int(f.attrs['nside'])
+
+    if config.get('face_safe_filter', True):
+        idx = _face_safe_indices(np.asarray(vec_map), nside, block)
+        print(f'load_sz: face_safe_filter kept {len(idx)}/{config.n_train}')
+        sz_obs = sz_obs[idx]
+        vec_map = vec_map[idx]
 
     # Transform to the desired dimensions.
     sz_obs = rearrange(

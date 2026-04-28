@@ -202,6 +202,69 @@ class DiffusionTests(chex.TestCase):
         self.assertTrue(jnp.allclose(expect_x, comp_x, atol=1e-3))
 
 
+class CGMaxiter1AlphaTests(chex.TestCase):
+    """Test that the closed-form maxiter=1 alpha matches cg_batched_adaptive."""
+
+    def _check_matches_cg(
+        self, M, b, regularization, safe_divide, error_threshold
+    ):
+        """At maxiter=1, `alpha * b` from `cg_maxiter1_alpha` must equal
+        `cg_batched_adaptive(..., maxiter=1)` to fp roundoff."""
+        def lin_transf(v):
+            return jnp.einsum('...ij,...j->...i', M, v)
+        x_ref = diffusion.cg_batched_adaptive(
+            lin_transf, b, maxiter=1, tol=1e-12,
+            safe_divide=safe_divide, regularization=regularization,
+            error_threshold=error_threshold,
+        )
+        Ab = lin_transf(b)
+        alpha = diffusion.cg_maxiter1_alpha(
+            b, Ab, regularization=regularization,
+            safe_divide=safe_divide, error_threshold=error_threshold,
+        )
+        x_fast = alpha * b
+        self.assertTrue(jnp.allclose(x_fast, x_ref, atol=1e-6))
+
+    def test_spd_unregularized_no_threshold(self):
+        """error_threshold=None: matches the unregularized solve."""
+        n = 8
+        rng = jax.random.PRNGKey(0)
+        A = jax.random.normal(rng, (n, n))
+        M = A @ A.T + jnp.eye(n)
+        b = jax.random.normal(jax.random.PRNGKey(1), (n,))
+        self._check_matches_cg(M, b, 0.0, 1e-32, error_threshold=None)
+
+    def test_spd_with_adaptive_merge(self):
+        """error_threshold set: per-element merge between unreg and reg."""
+        n = 8
+        rng = jax.random.PRNGKey(0)
+        A = jax.random.normal(rng, (n, n))
+        M = A @ A.T + jnp.eye(n)
+        b = jax.random.normal(jax.random.PRNGKey(1), (n,))
+        self._check_matches_cg(M, b, 1e-3, 1e-6, error_threshold=0.05)
+
+    def test_indefinite_falls_back_to_zero(self):
+        """A non-PD operator triggers the broken path -> alpha=0."""
+        n = 8
+        rng = jax.random.PRNGKey(0)
+        A = jax.random.normal(rng, (n, n))
+        M = A @ A.T - 5.0 * jnp.eye(n)  # has negative eigenvalues
+        b = jax.random.normal(jax.random.PRNGKey(1), (n,))
+        # error_threshold=None forces unregularized only -> may go to 0.
+        self._check_matches_cg(M, b, 0.0, 1e-32, error_threshold=None)
+        # With reg, the merge picks the regularized alpha when residual is large.
+        self._check_matches_cg(M, b, 1.0, 1e-6, error_threshold=0.05)
+
+    def test_batched(self):
+        """Per-batch operator/b combo, mixed conditioning."""
+        B, n = 4, 8
+        rng = jax.random.PRNGKey(0)
+        A = jax.random.normal(rng, (B, n, n))
+        M = jnp.einsum('bij,bkj->bik', A, A) + jnp.eye(n)
+        b = jax.random.normal(jax.random.PRNGKey(1), (B, n))
+        self._check_matches_cg(M, b, 1e-3, 1e-6, error_threshold=0.05)
+
+
 class PosteriorDenoiserJointTests(chex.TestCase):
     """Runs tests of various posterior diffusion functions."""
 
@@ -262,6 +325,40 @@ class PosteriorDenoiserJointTests(chex.TestCase):
         # Check the sde_sigma outputs.
         sigma_t = apply_func(params_denoiser, t_draws, method='sde_sigma')
         self.assertTupleEqual(sigma_t.shape, (batch_size, 1))
+
+    @chex.all_variants
+    def test_posterior_denoiser_maxiter_gt_one(self):
+        """Sanity-check that the CG path (maxiter > 1) still runs and
+        returns finite output of the right shape after the maxiter=1 fast
+        path was added."""
+        rng = jax.random.PRNGKey(0)
+        rng_keys = jax.random.split(rng, 2)
+
+        features = 5
+        batch_size = 8
+        x_draws = jax.random.normal(rng_keys[0], (batch_size, features))
+        t_draws = jax.random.uniform(rng_keys[1], (batch_size,))
+
+        sde = diffusion.VESDE()
+        time_mlp = embedding_models.TimeMLP(
+            features, (32, 32), nn.gelu, True
+        )
+        y_features = 2
+        denoiser_models = [
+            diffusion.Denoiser(sde, time_mlp, emb_features=64)
+        ]
+
+        denoiser = diffusion.PosteriorDenoiserJoint(
+            denoiser_models, y_features, maxiter=3, rtol=1e-8,
+        )
+        params_denoiser = denoiser.init(
+            rng, jnp.ones((1, features)), jnp.ones((1,))
+        )
+
+        apply_func = self.variant(denoiser.apply, static_argnames='method')
+        out = apply_func(params_denoiser, x_draws, t_draws)
+        self.assertTupleEqual(out.shape, (batch_size, features))
+        self.assertTrue(jnp.all(jnp.isfinite(out)))
 
     @chex.all_variants
     def test_posterior_denoiser_dplr(self):

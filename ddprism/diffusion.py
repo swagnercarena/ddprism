@@ -165,6 +165,55 @@ def cg_batched_adaptive(
     return x_final
 
 
+def cg_maxiter1_alpha(
+    b: Array, Ab: Array, regularization: float = 0.0,
+    safe_divide: float = 1e-32, error_threshold: Optional[float] = None,
+) -> Array:
+    """Closed-form alpha for cg_batched_adaptive at maxiter=1.
+
+    At maxiter=1 CG returns v = alpha * b. Given Ab = lin_transf(b), this
+    returns the same per-element merged alpha that cg_batched_adaptive
+    would compute, so callers can build v = alpha * b without a second
+    backward pass through the operator.
+
+    Arguments:
+        b: Right hand side of the linear system.
+        Ab: Linear transformation applied to b (unregularized).
+        regularization: Regularization added to diagonal of linear system.
+        safe_divide: Minimum value for safe division.
+        error_threshold: Threshold for considering an error large. If None,
+            always return the unregularized alpha.
+
+    Returns:
+        Per-element alpha such that v = alpha * b matches CG-at-maxiter=1.
+    """
+    # Quadratic forms used by both branches.
+    bb = jnp.sum(b * b, -1, keepdims=True)
+    bAb = jnp.sum(b * Ab, -1, keepdims=True)
+
+    # First attempt without regularization.
+    a_no_reg = jnp.where(
+        jnp.isfinite(bAb) & (bAb > 0),
+        bb / jnp.maximum(bAb, 1e-32), 0.0,
+    )
+
+    # If error_threshold is None, never use regularization.
+    if error_threshold is None:
+        return a_no_reg
+
+    # Regularized alpha for the per-element fallback.
+    bAb_reg = bAb + regularization * bb
+    a_reg = jnp.where(
+        jnp.isfinite(bAb_reg) & (bAb_reg > 0),
+        bb / jnp.maximum(bAb_reg, safe_divide), 0.0,
+    )
+
+    # Use regularization for elements whose unregularized residual is large.
+    resid = b - a_no_reg * Ab
+    r_norm = jnp.sqrt(jnp.sum(resid * resid, -1, keepdims=True))
+    return jnp.where(r_norm > error_threshold, a_reg, a_no_reg)
+
+
 class VESDE(nn.Module):
     r"""Variance exploding (VE) SDE.
 
@@ -564,28 +613,43 @@ class PosteriorDenoiserJoint(nn.Module):
             matmul(A[..., i, :, :], x_exp)
             for i, x_exp in enumerate(x_exp_list)
         )
+        b = y.value - y_exp
 
-        # Compute Cov[y|x_t] function for solve.
+        # Compute Cov[y|x_t](v) and expose the per-source vjps so the
+        # maxiter=1 fast path can reuse them in cov_t_score.
         def cov_y_xt(v):
-            # Start with the covariance of y.
-            value = matmul(cov_y.value, v)
+            inner = [
+                vjp_list[i](matmul(A_t[..., i, :, :], v))[0]
+                for i in range(self.n_models(index))
+            ]
+            value = matmul(cov_y.value, v) + sum(
+                cov_t_list[i] * matmul(A[..., i, :, :], inner[i])
+                for i in range(self.n_models(index))
+            )
+            return value, inner
 
-            # Add the variance from each model.
-            for i in range(self.n_models(index)):
-                value += (
-                    cov_t_list[i] * matmul(
-                        A[..., i, :, :],
-                        vjp_list[i](matmul(A_t[..., i, :, :], v))[0]
-                    )
-                )
-
-            return value
+        # Closed-form CG at maxiter=1: v = alpha * b, so we reuse the inner
+        # vjps from cov_y_xt(b), scaled by alpha, for the post-solve
+        # cov_t_score. Skips a second backward pass per source.
+        if self.maxiter == 1:
+            Ab, inner_list = cov_y_xt(b)
+            alpha = cg_maxiter1_alpha(
+                b, Ab,
+                regularization=self.regularization,
+                safe_divide=self.safe_divide,
+                error_threshold=self.error_threshold,
+            )
+            cov_t_score = jnp.concat(
+                [cov_t_list[i] * (alpha * inner_list[i])
+                 for i in range(self.n_models(index))],
+                axis=-1,
+            )
+            return jnp.concat(x_exp_list, axis=-1) + cov_t_score
 
         # Computes the score using conjugate gradient method.
-        b = y.value - y_exp
         v = cg_batched_adaptive(
-            cov_y_xt, b, self.maxiter, self.rtol, self.safe_divide,
-            self.regularization, self.error_threshold
+            lambda v: cov_y_xt(v)[0], b, self.maxiter, self.rtol,
+            self.safe_divide, self.regularization, self.error_threshold
         )
 
         cov_t_score = jnp.concat(
@@ -707,28 +771,41 @@ class PosteriorDenoiserJointDiagonal(PosteriorDenoiserJoint):
             A[..., i, :] * x_exp
             for i, x_exp in enumerate(x_exp_list)
         )
+        b = y.value - y_exp
 
-        # Compute Cov[y|x_t] function for solve.
+        # Compute Cov[y|x_t](v) and expose the per-source vjps so the
+        # maxiter=1 fast path can reuse them in cov_t_score.
         def cov_y_xt(v):
-            # Start with the covariance of y.
-            value = matmul(cov_y.value, v)
+            inner = [
+                vjp_list[i](A[..., i, :] * v)[0]
+                for i in range(self.n_models(index))
+            ]
+            value = matmul(cov_y.value, v) + sum(
+                cov_t_list[i] * (A[..., i, :] * inner[i])
+                for i in range(self.n_models(index))
+            )
+            return value, inner
 
-            # Add the variance from each model.
-            for i in range(self.n_models(index)):
-                value += (
-                    cov_t_list[i] * (
-                        A[..., i, :] *
-                        vjp_list[i](A[..., i, :] * v)[0]
-                    )
-                )
-
-            return value
+        # Closed-form CG at maxiter=1: see cg_maxiter1_alpha.
+        if self.maxiter == 1:
+            Ab, inner_list = cov_y_xt(b)
+            alpha = cg_maxiter1_alpha(
+                b, Ab,
+                regularization=self.regularization,
+                safe_divide=self.safe_divide,
+                error_threshold=self.error_threshold,
+            )
+            cov_t_score = jnp.concat(
+                [cov_t_list[i] * (alpha * inner_list[i])
+                 for i in range(self.n_models(index))],
+                axis=-1,
+            )
+            return jnp.concat(x_exp_list, axis=-1) + cov_t_score
 
         # Computes the score using conjugate gradient method.
-        b = y.value - y_exp
         v = cg_batched_adaptive(
-            cov_y_xt, b, self.maxiter, self.rtol, self.safe_divide,
-            self.regularization, self.error_threshold
+            lambda v: cov_y_xt(v)[0], b, self.maxiter, self.rtol,
+            self.safe_divide, self.regularization, self.error_threshold
         )
 
         cov_t_score = jnp.concat(

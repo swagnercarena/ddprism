@@ -121,10 +121,26 @@ def eval_model(state, observed_map, sz_signal, vec_map, params):
     return loss, rmse, rmse_matched
 
 
+def train_step(
+    state, ema_params, observed_map, sz_signal, vec_map, rng, decay,
+):
+    """Fused apply + update + EMA. See `training_utils.train_step`."""
+    grads, loss = apply_model(
+        state, observed_map, sz_signal, vec_map, rng,
+    )
+    new_state = training_utils.update_model(state, grads)
+    new_ema_params = jax.tree_util.tree_map(
+        lambda e, n: decay * e + (1.0 - decay) * n,
+        ema_params, new_state.params,
+    )
+    return new_state, new_ema_params, loss
+
+
 # Create pmapped functions
-apply_model_pmap = jax.pmap(apply_model, axis_name='batch')
-update_model = jax.pmap(training_utils.update_model, axis_name='batch')
 eval_model_pmap = jax.pmap(eval_model, axis_name='batch')
+train_step_pmap = jax.pmap(
+    train_step, axis_name='batch', donate_argnums=(0, 1),
+)
 
 
 def main(_):
@@ -207,8 +223,9 @@ def main(_):
     state = create_regression_state(rng_state, config, healpix_shape, n_batches)
     state = jax_utils.replicate(state)
 
-    # Initialize EMA for better generalization
-    ema = training_utils.EMA(jax_utils.unreplicate(state).params)
+    # EMA params live on-device, replicated, so the per-step update fuses
+    # with the gradient/optimizer step inside `train_step`.
+    ema_params = jax.tree_util.tree_map(jnp.copy, state.params)
 
     # Training loop
     print('Beginning training.')
@@ -229,24 +246,20 @@ def main(_):
             sz_signal_batch = sz_clean_train[batch_indices]
             vec_map_batch = vec_map_train[batch_indices]
 
-            # Update model.
+            # Update model + EMA in one fused pmap.
             rng_apply, rng = jax.random.split(rng)
             rng_apply = jax.random.split(rng_apply, jax.local_device_count())
-            grads, loss = apply_model_pmap(
-                state, sz_obs_batch, sz_signal_batch, vec_map_batch,
-                rng_apply
-            )
-            state = update_model(state, grads)
-
-            # Update EMA
-            ema = ema.update(
-                jax_utils.unreplicate(state).params,
+            decay = jax_utils.replicate(jnp.float32(
                 config.ema_decay ** (epoch * n_batches + batch_idx + 1)
+            ))
+            state, ema_params, loss = train_step_pmap(
+                state, ema_params, sz_obs_batch, sz_signal_batch,
+                vec_map_batch, rng_apply, decay,
             )
             wandb.log({'loss': jax_utils.unreplicate(loss)})
 
-        # Evaluate on validation set
-        ema_params_replicated = jax_utils.replicate(ema.params)
+        # Evaluate on validation set with current EMA params (already replicated).
+        ema_params_replicated = ema_params
         val_losses = []
         val_rmses = []
         val_rmses_matched = []
@@ -287,7 +300,7 @@ def main(_):
         wandb.log(metrics_dict, commit=False)
 
         ckpt = {
-            'ema_params': jax.device_get(ema.params),
+            'ema_params': jax.device_get(jax_utils.unreplicate(ema_params)),
             'config': config.to_dict(),
             'epoch': epoch,
             'metrics_val': jax.device_get(metrics_dict),

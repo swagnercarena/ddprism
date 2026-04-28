@@ -15,6 +15,12 @@ from ddprism import diffusion
 from ddprism import embedding_models
 from ddprism import training_utils
 
+# Force x64 before any JAX op runs in this process. The TrainStepTests need
+# fp64 so the byte-identity assertions hold; under fp32 the jit-compiled
+# fused and unfused paths drift from XLA op reordering. The ddprism imports
+# above only declare Flax modules; nothing has been compiled yet.
+jax.config.update('jax_enable_x64', True)
+
 
 def _create_test_config():
     """Create a test configuration with all configurable parameters."""
@@ -250,6 +256,136 @@ class ApplyModelTests(chex.TestCase):
         self.assertEqual(loss.shape, ())
 
 
+class TrainStepTests(chex.TestCase):
+    """Run tests on the fused train_step function.
+
+    Module-level `JAX_ENABLE_X64=1` (set above the jax import) keeps the
+    byte-identity assertions stable; fp32 has XLA op-reorder drift.
+    """
+
+    def _create_simple_state(self, rng, config):
+        sde = diffusion.VESDE(config.sde.a, config.sde.b)
+        time_mlp = embedding_models.TimeMLP(
+            features=config.feat_dim,
+            hid_features=config.hidden_features,
+            normalize=config.time_mlp_normalize,
+        )
+        denoiser = diffusion.Denoiser(
+            sde, time_mlp, emb_features=config.emb_features,
+        )
+        params = denoiser.init(
+            rng, jnp.ones((1, config.feat_dim)), jnp.ones((1,)),
+        )
+        optimizer = training_utils.get_optimizer(config)(
+            lambda step: config.lr_init_val
+        )
+        tx = optax.chain(
+            optax.clip_by_global_norm(config.grad_clip_norm), optimizer,
+        )
+        return train_state.TrainState.create(
+            apply_fn=denoiser.apply, params=params['params'], tx=tx,
+        )
+
+    @chex.all_variants
+    def test_train_step_matches_separate_calls(self):
+        """train_step must produce the same (state, ema_params, loss) as the
+        equivalent apply_model + update_model + manual EMA tree_map."""
+        config = _create_test_config()
+        rng = jax.random.PRNGKey(0)
+        state = self._create_simple_state(rng, config)
+        batch_size = 4
+        x = jax.random.normal(rng, (batch_size, config.feat_dim))
+        decay = jnp.float32(0.99)
+        ema_params = jax.tree_util.tree_map(jnp.copy, state.params)
+
+        # Reference path.
+        grads, ref_loss = training_utils.apply_model(
+            state, x, rng, config=config, pmap=False,
+        )
+        ref_state = training_utils.update_model(state, grads)
+        ref_ema = jax.tree_util.tree_map(
+            lambda e, n: decay * e + (1.0 - decay) * n,
+            ema_params, ref_state.params,
+        )
+
+        # Fused path.
+        step = self.variant(
+            functools.partial(
+                training_utils.train_step, config=config, pmap=False,
+            )
+        )
+        new_state, new_ema, loss = step(
+            state, ema_params, x, rng, decay=decay,
+        )
+
+        self.assertTrue(jnp.allclose(loss, ref_loss, atol=1e-6))
+        for ref, new in zip(
+            jax.tree_util.tree_leaves(ref_state.params),
+            jax.tree_util.tree_leaves(new_state.params),
+        ):
+            self.assertTrue(jnp.allclose(ref, new, atol=1e-6))
+        for ref, new in zip(
+            jax.tree_util.tree_leaves(ref_ema),
+            jax.tree_util.tree_leaves(new_ema),
+        ):
+            self.assertTrue(jnp.allclose(ref, new, atol=1e-6))
+
+    def test_train_step_multistep_byte_identical(self):
+        """Across multiple training steps, the fused train_step must produce
+        byte-identical state, ema_params, and loss versus the unfused path."""
+        config = _create_test_config()
+        rng = jax.random.PRNGKey(0)
+        state = self._create_simple_state(rng, config)
+        batch_size = 4
+        decay = jnp.float64(0.99)
+
+        n_steps = 5
+        x_pool = jax.random.normal(rng, (n_steps, batch_size, config.feat_dim))
+
+        # Reference path: separate apply + update + manual EMA.
+        ref_state = state
+        ref_ema = jax.tree_util.tree_map(jnp.copy, state.params)
+        ref_losses = []
+        rng_ref = jax.random.PRNGKey(42)
+        for k in range(n_steps):
+            rng_step, rng_ref = jax.random.split(rng_ref)
+            grads, loss = training_utils.apply_model(
+                ref_state, x_pool[k], rng_step, config=config, pmap=False,
+            )
+            ref_state = training_utils.update_model(ref_state, grads)
+            ref_ema = jax.tree_util.tree_map(
+                lambda e, n: decay * e + (1.0 - decay) * n,
+                ref_ema, ref_state.params,
+            )
+            ref_losses.append(float(loss))
+
+        # Fused path: train_step.
+        new_state = state
+        new_ema = jax.tree_util.tree_map(jnp.copy, state.params)
+        new_losses = []
+        rng_new = jax.random.PRNGKey(42)
+        for k in range(n_steps):
+            rng_step, rng_new = jax.random.split(rng_new)
+            new_state, new_ema, loss = training_utils.train_step(
+                new_state, new_ema, x_pool[k], rng_step,
+                decay=decay, config=config, pmap=False,
+            )
+            new_losses.append(float(loss))
+
+        for ref, new in zip(ref_losses, new_losses):
+            self.assertEqual(ref, new)
+        for ref, new in zip(
+            jax.tree_util.tree_leaves(ref_state.params),
+            jax.tree_util.tree_leaves(new_state.params),
+        ):
+            self.assertTrue(jnp.array_equal(ref, new))
+        for ref, new in zip(
+            jax.tree_util.tree_leaves(ref_ema),
+            jax.tree_util.tree_leaves(new_ema),
+        ):
+            self.assertTrue(jnp.array_equal(ref, new))
+
+
 class DenoiserCreationTests(chex.TestCase):
     """Run tests on denoiser creation functions."""
 
@@ -342,7 +478,7 @@ class EMATests(chex.TestCase):
         params = FrozenDict(
             {'param1': jnp.array([1.0, 2.0]), 'param2': jnp.array([3.0])}
         )
-        ema = training_utils.EMA(params)
+        ema = training_utils._EMA(params)
 
         self.assertIsInstance(ema.params, FrozenDict)
         self.assertTrue(jnp.allclose(ema.params['param1'], params['param1']))
@@ -359,7 +495,7 @@ class EMATests(chex.TestCase):
             'param2': jnp.array([4.0])
         })
 
-        ema = training_utils.EMA(initial_params)
+        ema = training_utils._EMA(initial_params)
         decay = 0.9
 
         updated_ema = ema.update(new_params, decay)

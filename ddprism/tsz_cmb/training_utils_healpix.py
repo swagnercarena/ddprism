@@ -100,3 +100,24 @@ def apply_model(state, x, vec_map, rng, config=None, pmap=False):
         grads = jax.lax.pmean(grads, axis_name='batch')
 
     return grads, loss
+
+
+def train_step(
+    state, ema_params, x, vec_map, rng, *, decay, config=None, pmap=False
+):
+    """Single jit/pmap-friendly step: apply_model + update_model + EMA.
+
+    Healpix variant of `training_utils.train_step` -- threads `vec_map`
+    through the local `apply_model`. Combines all three operations into one
+    compile unit so the EMA update fuses with the gradient + optimizer
+    pipeline.
+    """
+    grads, loss = apply_model(
+        state, x, vec_map, rng, config=config, pmap=pmap,
+    )
+    new_state = training_utils.update_model(state, grads)
+    new_ema_params = jax.tree_util.tree_map(
+        lambda e, n: decay * e + (1.0 - decay) * n,
+        ema_params, new_state.params,
+    )
+    return new_state, new_ema_params, loss

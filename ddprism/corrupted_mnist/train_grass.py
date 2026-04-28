@@ -32,19 +32,6 @@ config_flags.DEFINE_config_file(
 )
 
 
-def apply_model_with_config(config):
-    """Create apply_model function with config."""
-    return jax.pmap( # pylint: disable=invalid-name
-        functools.partial(training_utils.apply_model, config=config, pmap=True),
-        axis_name='batch'
-    )
-
-
-update_model = jax.pmap( # pylint: disable=invalid-name
-    training_utils.update_model, axis_name='batch'
-)
-
-
 def create_posterior_train_state(
     rng, config, image_shape, mu_x=None, cov_x=None, gaussian=False
 ):
@@ -303,10 +290,14 @@ def main(_):
         rng_state, config, image_shape,
     )
     post_state_unet = jax_utils.replicate(post_state_unet)
-    ema = training_utils.EMA(jax_utils.unreplicate(state_unet).params)
+    # EMA params live on-device, replicated, so the per-step update fuses
+    # with the gradient/optimizer step inside `train_step`.
+    ema_params = jax.tree_util.tree_map(jnp.copy, state_unet.params)
 
-    # Create the apply_model function with config
-    apply_model = apply_model_with_config(config)
+    train_step_pmap = jax.pmap(
+        functools.partial(training_utils.train_step, config=config, pmap=True),
+        axis_name='batch', donate_argnums=(0, 1),
+    )
 
     # Change the sampling parameters to those for the diffusion model, and set
     # the prior sampling parameters.
@@ -340,18 +331,16 @@ def main(_):
             )
 
             rng_apply = jax.random.split(rng_apply, jax.local_device_count())
-            grads, loss = apply_model( # pylint: disable=not-callable
-                state_unet, x_post[batch_i], rng_apply
-            )
-            state_unet = update_model( # pylint: disable=not-callable
-                state_unet, grads
-            )
-            ema = ema.update(
-                jax_utils.unreplicate(state_unet).params,
+            decay = jax_utils.replicate(jnp.float32(
                 config.ema_decay ** (
                     config.em_laps * config.epochs /
                     (lap * config.epochs + epoch + 1)
                 )
+            ))
+            # pylint: disable=not-callable
+            state_unet, ema_params, loss = train_step_pmap(
+                state_unet, ema_params, x_post[batch_i], rng_apply,
+                decay=decay,
             )
             wandb.log(
                 {'loss_state': jax_utils.unreplicate(loss)}
@@ -363,7 +352,7 @@ def main(_):
             rng_samp, (grass_obs.shape[0], jax.device_count())
         )
         x_post = []
-        params = jax_utils.replicate({'denoiser_models_0': ema.params})
+        params = {'denoiser_models_0': ema_params}
 
         for grass_batch, rng_pmap in zip(grass_obs, rng_samp):
             x_post.append(
@@ -422,7 +411,8 @@ def main(_):
         ckpt = {
             'state': jax.device_get(jax_utils.unreplicate(state_unet)),
             'x_post': jax.device_get(x_post), 'x_prior': jax.device_get(x_prior),
-            'ema_params': jax.device_get(ema.params), 'config': config.to_dict(),
+            'ema_params': jax.device_get(jax_utils.unreplicate(ema_params)),
+            'config': config.to_dict(),
             'metrics_post': jax.device_get(metrics_dict_post),
             'metrics_prior': jax.device_get(metrics_dict_prior)
 
@@ -435,9 +425,10 @@ def main(_):
         # Initialize our next state with the current parameters.
         state_unet = training_utils.create_train_state_unet(
             rng_state, config, learning_rate_fn, image_shape,
-            params={'params': ema.params}
+            params={'params': jax_utils.unreplicate(ema_params)}
         )
         state_unet = jax_utils.replicate(state_unet)
+        ema_params = jax.tree_util.tree_map(jnp.copy, state_unet.params)
 
 
 if __name__ == '__main__':

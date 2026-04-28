@@ -30,25 +30,10 @@ config_flags.DEFINE_config_file(
 )
 
 
-def apply_model_with_config(config):
-    """Create apply_model function with config."""
-    return jax.pmap( # pylint: disable=invalid-name
-        functools.partial(
-            training_utils_healpix.apply_model, config=config, pmap=True
-        ),
-        axis_name='batch'
-    )
-
-
 def compute_metrics_for_samples(x_post, rand_no_noise):
     """Compute metrics for randoms samples."""
     rmse = jnp.sqrt(jnp.mean(jnp.square(x_post - rand_no_noise)))
     return {'rmse': rmse}
-
-
-update_model = jax.pmap( # pylint: disable=invalid-name
-    training_utils.update_model, axis_name='batch'
-)
 
 
 def create_posterior_train_state(
@@ -250,10 +235,16 @@ def main(_):
         rng_state, config, healpix_shapes, feat_dim,
     )
     post_state_transformer = jax_utils.replicate(post_state_transformer)
-    ema = training_utils.EMA(jax_utils.unreplicate(state_transformer).params)
+    # EMA params live on-device, replicated, so the per-step update fuses
+    # with the gradient/optimizer step inside `train_step`.
+    ema_params = jax.tree_util.tree_map(jnp.copy, state_transformer.params)
 
-    # Create the apply_model function with config
-    apply_model = apply_model_with_config(config)
+    train_step_pmap = jax.pmap(
+        functools.partial(
+            training_utils_healpix.train_step, config=config, pmap=True,
+        ),
+        axis_name='batch', donate_argnums=(0, 1),
+    )
 
     # Change the sampling parameters to those for the diffusion model.
     sample_pmap = jax.pmap(
@@ -278,19 +269,16 @@ def main(_):
             )
 
             rng_apply = jax.random.split(rng_apply, jax.local_device_count())
-            grads, loss = apply_model( # pylint: disable=not-callable
-                state_transformer, x_post[batch_i], vec_map_flat[batch_i],
-                rng_apply
-            )
-            state_transformer = update_model( # pylint: disable=not-callable
-                state_transformer, grads
-            )
-            ema = ema.update(
-                jax_utils.unreplicate(state_transformer).params,
+            decay = jax_utils.replicate(jnp.float32(
                 config.ema_decay ** (
                     config.em_laps * config.epochs /
                     (lap * config.epochs + epoch + 1)
                 )
+            ))
+            # pylint: disable=not-callable
+            state_transformer, ema_params, loss = train_step_pmap(
+                state_transformer, ema_params, x_post[batch_i],
+                vec_map_flat[batch_i], rng_apply, decay=decay,
             )
             wandb.log(
                 {'loss_state': jax_utils.unreplicate(loss)}
@@ -302,9 +290,7 @@ def main(_):
             rng_samp, (rand_obs.shape[0], jax.device_count())
         )
         x_post = []
-        post_state_params = jax_utils.replicate(
-            {'denoiser_models_0': ema.params}
-        )
+        post_state_params = {'denoiser_models_0': ema_params}
 
         for rand_batch, vec_batch, rng_pmap in zip(
             rand_obs, vec_map, rng_samp
@@ -329,7 +315,7 @@ def main(_):
         ckpt = {
             'state': jax.device_get(jax_utils.unreplicate(state_transformer)),
             'x_post': jax.device_get(x_post),
-            'ema_params': jax.device_get(ema.params),
+            'ema_params': jax.device_get(jax_utils.unreplicate(ema_params)),
             'config': config.to_dict(),
             'metrics_post': jax.device_get(metrics_dict_post),
         }
@@ -342,10 +328,13 @@ def main(_):
         state_transformer = (
             training_utils_healpix.create_train_state_transformer(
                 rng_state, config, learning_rate_fn, healpix_shapes[0],
-                params={'params': ema.params}
+                params={'params': jax_utils.unreplicate(ema_params)}
             )
         )
         state_transformer = jax_utils.replicate(state_transformer)
+        ema_params = jax.tree_util.tree_map(
+            lambda x: x, state_transformer.params
+        )
 
 
 if __name__ == '__main__':

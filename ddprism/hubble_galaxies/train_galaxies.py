@@ -39,14 +39,6 @@ config_flags.DEFINE_config_file(
 )
 
 
-def apply_model_with_config(config):
-    """Create apply_model function with config."""
-    return jax.pmap( # pylint: disable=invalid-name
-        functools.partial(training_utils.apply_model, config=config, pmap=True),
-        axis_name='batch'
-    )
-
-
 def compute_metrics_for_samples(x_post, config, image_shape):
     """Compute metrics for both randoms and galaxies samples."""
     # Compute metrics for randoms (x_post[0])
@@ -79,11 +71,6 @@ def compute_metrics_for_samples(x_post, config, image_shape):
         'snr_galaxies': snr_galaxies,
         'sparsity_galaxies': sparsity_galaxies
     }
-
-
-update_model = jax.pmap( # pylint: disable=invalid-name
-    training_utils.update_model, axis_name='batch'
-)
 
 
 def main(_):
@@ -264,10 +251,14 @@ def main(_):
         rng_state, config, config_randoms, image_shape,
     )
     post_state_unet = jax_utils.replicate(post_state_unet)
-    ema = training_utils.EMA(jax_utils.unreplicate(state_unet).params)
+    # EMA params live on-device, replicated, so the per-step update fuses
+    # with the gradient/optimizer step inside `train_step`.
+    ema_params = jax.tree_util.tree_map(jnp.copy, state_unet.params)
 
-    # Create the apply_model function with config
-    apply_model = apply_model_with_config(config)
+    train_step_pmap = jax.pmap(
+        functools.partial(training_utils.train_step, config=config, pmap=True),
+        axis_name='batch', donate_argnums=(0, 1),
+    )
 
     print('Beginning EM laps for diffusion model fitting.')
     for lap in tqdm(range(config.em_laps), desc='EM Lap'):
@@ -303,20 +294,18 @@ def main(_):
             )
 
             rng_apply = jax.random.split(rng_apply, jax.local_device_count())
-            grads, loss = apply_model( # pylint: disable=not-callable
-                state_unet, x_post[1][batch_i], rng_apply
-            )
-            state_unet = update_model( # pylint: disable=not-callable
-                state_unet, grads
-            )
             # Techincally calculates the ema decay without accounting for the
             # dynamic number of epochs.
-            ema = ema.update(
-                jax_utils.unreplicate(state_unet).params,
+            decay = jax_utils.replicate(jnp.float32(
                 config.ema_decay ** (
                     config.em_laps * config.epochs /
                     (lap * config.epochs + epoch + 1)
                 )
+            ))
+            # pylint: disable=not-callable
+            state_unet, ema_params, loss = train_step_pmap(
+                state_unet, ema_params, x_post[1][batch_i], rng_apply,
+                decay=decay,
             )
             wandb.log(
                 {'loss_state': jax_utils.unreplicate(loss)}
@@ -332,10 +321,9 @@ def main(_):
         )
         x_post = []
         params = {
-            'denoiser_models_0': randoms_params,
-            'denoiser_models_1': ema.params
+            'denoiser_models_0': jax_utils.replicate(randoms_params),
+            'denoiser_models_1': ema_params,
         }
-        params = jax_utils.replicate(params)
 
         pbar = tqdm(
             zip(gal_obs, cov_y_list, A_mat, rng_samp), total=(len(rng_samp)),
@@ -370,7 +358,7 @@ def main(_):
         ckpt = {
             'state': jax.device_get(jax_utils.unreplicate(state_unet)),
             'x_post': jax.device_get(x_post),
-            'ema_params': jax.device_get(ema.params),
+            'ema_params': jax.device_get(jax_utils.unreplicate(ema_params)),
             'config': config.to_dict(), 'metrics': jax.device_get(lap_metrics),
             'rand_obs': jax.device_get(gal_obs)
         }
@@ -385,9 +373,10 @@ def main(_):
         # Initialize our next state with the current parameters.
         state_unet = training_utils.create_train_state_unet(
             rng_state, config, learning_rate_fn, image_shape,
-            params={'params': ema.params}
+            params={'params': jax_utils.unreplicate(ema_params)}
         )
         state_unet = jax_utils.replicate(state_unet)
+        ema_params = jax.tree_util.tree_map(jnp.copy, state_unet.params)
 
 
 if __name__ == '__main__':

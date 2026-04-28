@@ -75,6 +75,31 @@ def update_model(state, grads):
     return state.apply_gradients(grads=grads)
 
 
+def train_step(state, ema_params, x, rng, *, decay, config=None, pmap=False):
+    """Single jit/pmap-friendly step: apply_model + update_model + EMA.
+
+    Arguments:
+        state: TrainState for the prior denoiser.
+        ema_params: Pytree of EMA params, same structure as state.params.
+        x: Training batch.
+        rng: PRNG key.
+        decay: EMA decay scalar; can vary per step.
+        config: Optional config passed to apply_model.
+        pmap: If True, apply the cross-device gradient pmean. Should match
+            the calling pmap context.
+
+    Returns:
+        Tuple of (new_state, new_ema_params, loss).
+    """
+    grads, loss = apply_model(state, x, rng, config=config, pmap=pmap)
+    new_state = update_model(state, grads)
+    new_ema_params = jax.tree_util.tree_map(
+        lambda e, n: decay * e + (1.0 - decay) * n,
+        ema_params, new_state.params,
+    )
+    return new_state, new_ema_params, loss
+
+
 def get_optimizer(config):
     """Get the optimizer specified by the config."""
     optimizer_config = config.get('optimizer', {'type': 'adam'})
@@ -246,12 +271,9 @@ def create_train_state_unet(
     )
 
 
-class EMA:
-    """Exponential moving average of state parametters.
-
-    Args:
-        params: Initial parameter values.
-    """
+class _EMA:
+    """Host-side EMA reference. Kept for tests only; production code paths
+    use the fused EMA update inside `train_step`."""
     def __init__(self, params: FrozenDict):
         self.params = params
 
@@ -262,4 +284,4 @@ class EMA:
             self.params,
             new_params
         )
-        return EMA(params=updated_params)
+        return _EMA(params=updated_params)

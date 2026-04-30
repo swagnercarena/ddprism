@@ -333,7 +333,7 @@ def main(_):
         )
         state_transformer = jax_utils.replicate(state_transformer)
         ema_params = jax.tree_util.tree_map(
-            lambda x: x, state_transformer.params
+            jnp.copy, state_transformer.params
         )
 
 

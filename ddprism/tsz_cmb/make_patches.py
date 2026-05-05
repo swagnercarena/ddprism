@@ -376,6 +376,10 @@ def main():
         "--outdir", type=str, default=None,
         help="Output directory."
     )
+    parser.add_argument(
+        "--freqs", type=str, default="93,143,353",
+        help="Comma-separated list of frequencies in GHz (default: 93,143,353).",
+    )
     args = parser.parse_args()
 
     profile_str = args.profile_str
@@ -387,12 +391,10 @@ def main():
     base_dir = '/mnt/home/abayer/ceph/fastpm/halfdome/oneweek/'
     num_pixels = args.numpixels
     outdir = args.outdir
+    freqs = [int(f) for f in args.freqs.split(",")]
 
     # Setup output directory.
     os.makedirs(outdir, exist_ok=True)
-
-    # TODO: Hardcoded frequencies.
-    freqs = [93, 143, 353]
 
     # Load halos.
     f_halos = (

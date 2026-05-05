@@ -15,12 +15,19 @@ module load modules/2.2
 module load python/3.10.10
 module load openmpi python-mpi
 source $VENVDIR/pyrecon/bin/activate
+cd /mnt/home/abayer/source/ddprism/ddprism/tsz_cmb
 
-for profile_str in 'b16g7rel'; do  # 'b16' 'b16g7' 'b16g7rel'
+outBASE="/mnt/home/abayer/ceph/fastpm/halfdome/oneweek/final"
 
-srun -N 1 -n 8 -c 8 python make_patches.py --profile_str $profile_str --dataset_name "T_tot" --noise 7
-srun -N 1 -n 8 -c 8 python make_patches.py --profile_str $profile_str --dataset_name "dT_tsz" --noise 0
-srun -N 1 -n 8 -c 8 python make_patches.py --profile_str $profile_str --dataset_name "T_tot" --random_pos --noise 7
-srun -N 1 -n 8 -c 8 python make_patches.py --profile_str $profile_str --dataset_name "dT_cmblens" --random_pos --noise 0
+for profile_str in 'b16' 'b16g7' 'b16g7rel'; do
+
+outdir="${outBASE}/${profile_str}/patches/"
+mkdir -p "$outdir"
+
+# python make_patches.py --profile_str=$profile_str --dataset_name=T_tot --noise=7.0 --outdir="$outdir"
+# python make_patches.py --profile_str=$profile_str --dataset_name=dT_tsz --noise=0.0 --outdir="$outdir"
+# python make_patches.py --profile_str=$profile_str --dataset_name=T_tot --random_pos --noise=7.0 --outdir="$outdir"
+# python make_patches.py --profile_str=$profile_str --dataset_name=dT_tsz --random_pos --noise=0.0 --outdir="$outdir"
+python make_patches.py --profile_str=$profile_str --dataset_name=T_tot --random_pos --noise=0.0 --outdir="$outdir"
 
 done

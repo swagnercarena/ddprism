@@ -285,9 +285,11 @@ def main(_):
             )
 
         # Generate new posterior samples with our model.
-        rng_samp, rng = jax.random.split(rng)
+        # Fixed eval seed so per-lap rmse reflects prior changes only, not
+        # sampler noise. Per-observation diversity is preserved by splitting.
         rng_samp = jax.random.split(
-            rng_samp, (rand_obs.shape[0], jax.device_count())
+            jax.random.PRNGKey(42),
+            (rand_obs.shape[0], jax.device_count())
         )
         x_post = []
         post_state_params = {'denoiser_models_0': ema_params}

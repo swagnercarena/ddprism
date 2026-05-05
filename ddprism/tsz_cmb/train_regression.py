@@ -249,8 +249,10 @@ def main(_):
             # Update model + EMA in one fused pmap.
             rng_apply, rng = jax.random.split(rng)
             rng_apply = jax.random.split(rng_apply, jax.local_device_count())
+            total_steps = config.epochs * n_batches
+            current_step = epoch * n_batches + batch_idx + 1
             decay = jax_utils.replicate(jnp.float32(
-                config.ema_decay ** (epoch * n_batches + batch_idx + 1)
+                config.ema_decay ** (total_steps / current_step)
             ))
             state, ema_params, loss = train_step_pmap(
                 state, ema_params, sz_obs_batch, sz_signal_batch,

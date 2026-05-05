@@ -293,8 +293,10 @@ def main(_):
 
     # Initialize our state and posterior state.
     rng_state, rng = jax.random.split(rng, 2)
+    # LR schedule spans the full em_laps * epochs trajectory because we
+    # carry state forward across laps (no resets), so step keeps growing.
     learning_rate_fn = training_utils.get_learning_rate_schedule(
-        config, config.lr_init_val, config.epochs
+        config, config.lr_init_val, config.epochs * config.em_laps
     )
     state_transformer = training_utils_healpix.create_train_state_transformer(
         rng_state, config, learning_rate_fn, healpix_shapes[1]
@@ -360,9 +362,11 @@ def main(_):
             )
 
         # Generate new posterior samples with our model.
-        rng_samp, rng = jax.random.split(rng)
+        # Fixed eval seed so per-lap rmse reflects prior changes only, not
+        # sampler noise. Per-observation diversity is preserved by splitting.
         rng_samp = jax.random.split(
-            rng_samp, (sz_obs.shape[0], jax.device_count())
+            jax.random.PRNGKey(42),
+            (sz_obs.shape[0], jax.device_count())
         )
         x_post = []
         post_state_params = {
@@ -409,16 +413,15 @@ def main(_):
             lap + 1, ckpt, save_kwargs={'save_args': save_args}
         )
 
-        # Initialize our next state with the current parameters.
-        state_transformer = (
-            training_utils_healpix.create_train_state_transformer(
-                rng_state, config, learning_rate_fn, healpix_shapes[1],
-                params={'params': jax_utils.unreplicate(ema_params)}
-            )
-        )
-        state_transformer = jax_utils.replicate(state_transformer)
-        ema_params = jax.tree_util.tree_map(
-            jnp.copy, state_transformer.params
+        # Carry state forward across laps: only swap params -> EMA. This
+        # preserves state.step (so cosine LR keeps decaying), Adam moments
+        # (so updates stay well-conditioned), and gradient-clip stats. The
+        # alternative -- rebuilding state from scratch -- caused the
+        # lap-boundary RMSE jumps we saw in earlier runs.
+        # jnp.copy is required: train_step_pmap has donate_argnums=(0, 1),
+        # so state.params and ema_params must live in independent buffers.
+        state_transformer = state_transformer.replace(
+            params=jax.tree_util.tree_map(jnp.copy, ema_params)
         )
 
 

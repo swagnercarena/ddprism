@@ -1,0 +1,16 @@
+#!/bin/bash
+#SBATCH -J sample_sz_pm_b16
+#SBATCH -p gpuxl --reservation=rocky9
+#SBATCH -t 3:00:00
+#SBATCH --nodes=1
+#SBATCH --ntasks-per-node=1
+#SBATCH --gpus-per-task=4
+#SBATCH --mem=200GB
+#SBATCH -o /mnt/ceph/users/abayer/joboutput/sample_sz_pm_b16.o%j
+#SBATCH --mail-user=abayer@berkeley.edu
+#SBATCH --mail-type=end,fail
+
+module load python
+source $VENVDIR/oneweek/bin/activate
+cd /mnt/home/abayer/source/ddprism/ddprism/tsz_cmb
+python sample_sz_posterior_mean.py --profile b16

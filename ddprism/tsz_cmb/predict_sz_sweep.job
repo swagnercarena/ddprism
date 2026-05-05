@@ -1,0 +1,23 @@
+#!/bin/bash
+#SBATCH -J predict_sz_sweep
+#SBATCH -p gpuxl --reservation=rocky9
+#SBATCH -t 6:00:00
+#SBATCH --nodes=1
+#SBATCH --ntasks-per-node=1
+#SBATCH --gpus-per-task=4
+#SBATCH --mem=200GB
+#SBATCH -o /mnt/ceph/users/abayer/joboutput/predict_sz_sweep.o%j
+#SBATCH --mail-user=abayer@berkeley.edu
+#SBATCH --mail-type=end,fail
+
+module load python
+source $VENVDIR/oneweek/bin/activate
+cd /mnt/home/abayer/source/ddprism/ddprism/tsz_cmb
+
+CKPT=/mnt/home/abayer/ceph/tsz_cmb/sz_so_b16/checkpoints/1
+echo "Waiting for $CKPT to appear (poll every 60s)..."
+while [ ! -d "$CKPT" ]; do
+    sleep 60
+done
+echo "$CKPT found, starting sweep"
+python predict_sz_sweep.py

@@ -1,0 +1,35 @@
+#!/bin/bash
+#SBATCH -J train_sz_so_b16
+#SBATCH -p gpuxl --reservation=rocky9
+#SBATCH -t 16:00:00
+#SBATCH --nodes=1
+#SBATCH --ntasks-per-node=1
+#SBATCH --gpus-per-task=4
+#SBATCH --mem=200GB
+#SBATCH -o /mnt/ceph/users/abayer/joboutput/train_sz_so_b16.o%j
+#SBATCH --mail-user=abayer@berkeley.edu
+#SBATCH --mail-type=end,fail
+
+module load python
+source $VENVDIR/oneweek/bin/activate
+export WANDB_NAME=train_sz_so_b16
+
+cd /mnt/home/abayer/source/ddprism/ddprism/tsz_cmb
+
+# SO 3-band SZ training, with-CIB.
+# Prior: long-randoms b16 model at argmin-loss lap (W&B lap 27 -> ckpt step 28).
+python -m train_sz \
+    --config=config_sz.py \
+    --workdir=/mnt/home/abayer/ceph/tsz_cmb/sz_so_b16/ \
+    --sz_path=/mnt/home/abayer/ceph/fastpm/halfdome/oneweek/final/b16/patches_so/T_tot_patches_noise7_s100_fwhm2_random_False.h5 \
+    --sz_no_noise_path=/mnt/home/abayer/ceph/fastpm/halfdome/oneweek/final/b16/patches_so/dT_tsz_patches_s100_fwhm2_random_False.h5 \
+    --randoms_workdir=/mnt/home/abayer/ceph/tsz_cmb/randoms_b16_so_long/ \
+    --randoms_lap=28 \
+    --config.ema_decay=0.999 \
+    --config.post_maxiter=1 \
+    --config.gaussian_em_laps=1 \
+    --config.em_laps=12 \
+    --config.epochs=4096 \
+    --config.emb_features=256 \
+    --config.sampling_kwargs.steps=64 \
+    --config.sample_batch_size=8

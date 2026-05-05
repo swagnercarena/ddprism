@@ -1,0 +1,33 @@
+#!/bin/bash
+#SBATCH -J train_randoms_b16_so_long
+#SBATCH -p gpuxl -C h200 --reservation=rocky9
+#SBATCH -t 60:00:00
+#SBATCH --nodes=1
+#SBATCH --ntasks-per-node=1
+#SBATCH --gpus-per-task=4
+#SBATCH --mem=200GB
+#SBATCH -o /mnt/ceph/users/abayer/joboutput/train_randoms_b16_so_long.o%j
+#SBATCH --mail-user=abayer@berkeley.edu
+#SBATCH --mail-type=end,fail
+
+module load python
+source $VENVDIR/oneweek/bin/activate
+export WANDB_NAME=train_randoms_b16_so_long
+
+cd /mnt/home/abayer/source/ddprism/ddprism/tsz_cmb
+
+# SO 3-band randoms training (93, 145, 280 GHz, with-CIB).
+# Same config as randoms_b16_big, just different input data.
+python -m train_randoms \
+    --config=config_randoms.py \
+    --workdir=/mnt/home/abayer/ceph/tsz_cmb/randoms_b16_so_long/ \
+    --config.ema_decay=0.999 \
+    --randoms_path=/mnt/home/abayer/ceph/fastpm/halfdome/oneweek/final/b16/patches_so/T_tot_patches_noise7_s100_fwhm2_random_True.h5 \
+    --randoms_no_noise_path=/mnt/home/abayer/ceph/fastpm/halfdome/oneweek/final/b16/patches_so/T_tot_patches_s100_fwhm2_random_True.h5 \
+    --config.emb_features=1024 \
+    --config.sampling_kwargs.steps=64 \
+    --config.sample_batch_size=64 \
+    --config.batch_size=256 \
+    --config.lr_init_val=2e-3 \
+    --config.em_laps=40 \
+    --config.epochs=2048

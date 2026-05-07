@@ -11,6 +11,77 @@ import numpy as np
 from ddprism import linalg
 
 
+def _perchan_std(x):
+    """Per-channel std of x (shape ..., N, C) → shape (C,). Data-driven
+    scale used by the 'perchan_linear' mode."""
+    # Reduce over all axes except the last (channel).
+    flat = np.asarray(x).reshape(-1, x.shape[-1])
+    return jnp.asarray(np.std(flat, axis=0))
+
+
+def _normalize(x, config):
+    """Normalize input patches to roughly [-data_max, data_max].
+
+    Modes (selected by config.get('normalization', 'linear')):
+      - 'linear':         x_norm = x / map_norm  (single global scale).
+      - 'asinh':          x_norm = asinh(x / asinh_scale). Compresses
+                          dynamic range; helps regression substantially
+                          (~50% RMSE drop). For ddprism the asinh
+                          nonlinearity breaks the joint posterior
+                          solver's linear forward model and produces
+                          heteroscedastic noise the constant-cov_y solver
+                          mishandles -- expect worse matched-filter RMSE.
+      - 'perchan_linear': x_norm[c] = x[c] / σ[c], with σ[c] computed
+                          from the loaded data. Data-driven per-channel
+                          scale, linear-preserving.
+                          NB: σ_c-normalized values are O(1), so
+                          data_max=1 would clip at ~1σ -- pair this
+                          mode with data_max ~ 5-10.
+
+    Per-channel is only provided for the linear branch; perchan_asinh
+    has the same drawbacks as asinh for ddprism without enough additional
+    benefit to justify the maintenance burden.
+    """
+    mode_check = config.get('normalization', 'linear')
+    if mode_check == 'perchan_linear' and config.data_max < 3.0:
+        print(
+            f"WARNING: perchan_linear with data_max={config.data_max} will "
+            'clip aggressively (~1σ). Recommend data_max >= 5.'
+        )
+    mode = config.get('normalization', 'linear')
+    if mode == 'linear':
+        x = x / config.map_norm
+    elif mode == 'asinh':
+        x = jnp.arcsinh(x / float(config.get('asinh_scale', 50.0)))
+    elif mode == 'perchan_linear':
+        std_c = _perchan_std(x)
+        x = x / std_c
+    else:
+        raise ValueError(f"unknown normalization '{mode}'")
+    return jnp.clip(x, -config.data_max, config.data_max)
+
+
+def _normalized_noise_var(config, x=None):
+    """Approximate per-pixel noise variance in the *normalized* space, used
+    by cov_y. For 'asinh', uses the linear-regime (small-x) approximation,
+    which is good for typical noise-dominated pixels but wrong at high
+    amplitudes (heteroscedasticity). Returns a scalar for global scales
+    or shape-(C,) for per-channel modes.
+    """
+    mode = config.get('normalization', 'linear')
+    raw_noise = 7.0  # μK, hardcoded
+    if mode == 'asinh':
+        return (raw_noise / float(config.get('asinh_scale', 50.0))) ** 2
+    if mode == 'perchan_linear':
+        if x is None:
+            raise ValueError(
+                "perchan_linear requires `x` to compute per-channel σ"
+            )
+        std_c = _perchan_std(x)
+        return (raw_noise / std_c) ** 2  # shape (C,)
+    return (raw_noise / config.map_norm) ** 2
+
+
 def _polar_polar_safe_indices(
     vecs: np.ndarray, nside: int, block: int
 ) -> np.ndarray:
@@ -66,8 +137,9 @@ def load_randoms(
         rand_obs, '(B P S) N C -> B P S N C', P=jax.device_count(),
         S=config.sample_batch_size
     )
-    rand_obs = rand_obs / config.map_norm
-    rand_obs = jnp.clip(rand_obs, -config.data_max, config.data_max)
+    n_pix = rand_obs.shape[-2]
+    noise_var = _normalized_noise_var(config, x=rand_obs)
+    rand_obs = _normalize(rand_obs, config)
     rand_obs = rearrange(rand_obs, '... N C -> ... (N C)')
 
     vec_map = rearrange(
@@ -75,17 +147,20 @@ def load_randoms(
         S=config.sample_batch_size
     )
 
-    # TODO: Hardcoded!
-    noise = 7.0 / config.map_norm
-
     A_mat = jnp.tile(
         jnp.ones(rand_obs.shape[-1])[None, None, None],
         [jax.device_count(), config.sample_batch_size, 1, 1]
     )
 
+    # If per-channel noise_var has shape (C,), tile across pixels matching
+    # the '... N C -> ... (N C)' flat layout (channel-fastest).
+    if jnp.ndim(noise_var) > 0:
+        noise_diag = jnp.tile(noise_var, n_pix)
+    else:
+        noise_diag = jnp.ones(rand_obs.shape[-1]) * noise_var
     cov_y = linalg.DPLR(
         diagonal=jnp.tile(
-            jnp.ones(rand_obs.shape[-1]) * noise ** 2,
+            noise_diag,
             (jax.device_count(), config.sample_batch_size, 1)
         )
     )
@@ -117,8 +192,9 @@ def load_sz(
         sz_obs, '(B P S) N C -> B P S N C', P=jax.device_count(),
         S=config.sample_batch_size
     )
-    sz_obs = sz_obs / config.map_norm
-    sz_obs = jnp.clip(sz_obs, -config.data_max, config.data_max)
+    n_pix = sz_obs.shape[-2]
+    noise_var = _normalized_noise_var(config, x=sz_obs)
+    sz_obs = _normalize(sz_obs, config)
     sz_obs = rearrange(sz_obs, '... N C -> ... (N C)')
 
     vec_map = rearrange(
@@ -126,18 +202,19 @@ def load_sz(
         S=config.sample_batch_size
     )
 
-    # TODO: Hardcoded!
-    noise = 7.0 / config.map_norm
-
     # Account for having two sources.
     A_mat = jnp.tile(
         jnp.ones(sz_obs.shape[-1])[None, None, None],
         [jax.device_count(), config.sample_batch_size, 2, 1]
     )
 
+    if jnp.ndim(noise_var) > 0:
+        noise_diag = jnp.tile(noise_var, n_pix)
+    else:
+        noise_diag = jnp.ones(sz_obs.shape[-1]) * noise_var
     cov_y = linalg.DPLR(
         diagonal=jnp.tile(
-            jnp.ones(sz_obs.shape[-1]) * noise ** 2,
+            noise_diag,
             (jax.device_count(), config.sample_batch_size, 1)
         )
     )

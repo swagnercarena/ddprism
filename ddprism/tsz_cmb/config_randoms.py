@@ -11,6 +11,14 @@ def get_config():
     config.n_train = 61_440
     config.map_norm = 2000.0
     config.data_max = 1.0
+    # Normalization mode (see ddprism/tsz_cmb/load_datasets.py:_normalize):
+    #   'linear'         -- x/map_norm (default; ddprism-safe).
+    #   'asinh'          -- asinh(x/asinh_scale). Big regression win;
+    #                       not recommended for ddprism (see _normalize
+    #                       docstring for caveats).
+    #   'perchan_linear' -- data-driven per-channel scale, linear-preserving.
+    config.normalization = 'linear'
+    config.asinh_scale = 50.0
 
     # Parameters for the Denoisers.
     config.sde = ConfigDict({'a': 1e-4, 'b': 1e2})

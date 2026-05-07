@@ -14,6 +14,14 @@ def get_config():
     config.n_val = 8192  # Number of validation samples
     config.map_norm = 2000.0
     config.data_max = 1.0
+    # See config_randoms.py for available modes.
+    config.normalization = 'linear'
+    config.asinh_scale = 50.0
+    # If True, sinh-invert both pred and target before MSE so the loss is
+    # in physical μK rather than asinh-normalized space. Only meaningful
+    # when normalization=='asinh'. (Empirically did not improve
+    # regression — kept as an option but default False.)
+    config.physical_loss = False
 
     # Model architecture parameters
     config.emb_features = 512

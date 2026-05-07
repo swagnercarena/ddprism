@@ -1,4 +1,5 @@
 "Train a regression model to denoise SZ maps."
+import functools
 import gc
 import os
 
@@ -64,21 +65,27 @@ def create_regression_state(rng, config, healpix_shape, n_batches):
 
 
 def apply_model(
-    state, observed_map, sz_signal, vec_map, rng
+    state, observed_map, sz_signal, vec_map, rng,
+    physical_loss=False, asinh_scale=50.0,
 ):
-    """Computes gradients and loss for a single batch."""
+    """Computes gradients and loss for a single batch.
+
+    If `physical_loss` is True, both `x_pred` and `sz_signal` are
+    interpreted as asinh-normalized; we sinh-invert them back to physical
+    units before computing MSE. Only meaningful with normalization='asinh'.
+    """
 
     def loss_fn(params):
-        # Forward pass through the model
         rng_drop = rng
         x_pred = state.apply_fn(
             {'params': params}, observed_map, vec_map,
             train=True, rngs={'dropout': rng_drop}
         )
-
-        # Compute MSE loss
-        loss = jnp.mean(jnp.square(x_pred - sz_signal))
-        return loss
+        if physical_loss:
+            x_pred_phys = asinh_scale * jnp.sinh(x_pred)
+            sz_phys = asinh_scale * jnp.sinh(sz_signal)
+            return jnp.mean(jnp.square(x_pred_phys - sz_phys))
+        return jnp.mean(jnp.square(x_pred - sz_signal))
 
     grad_fn = jax.value_and_grad(loss_fn)
     loss, grads = grad_fn(state.params)
@@ -99,21 +106,28 @@ def match_filered_rmse(x_pred, sz_signal):
     return rmse_matched
 
 
-def eval_model(state, observed_map, sz_signal, vec_map, params):
-    """Compute predictions and loss for evaluation (no gradients)."""
-    # Forward pass through the model
+def eval_model(
+    state, observed_map, sz_signal, vec_map, params,
+    physical_loss=False, asinh_scale=50.0,
+):
+    """Compute predictions and loss for evaluation (no gradients).
+
+    Mirrors apply_model: when physical_loss is True, sinh-invert both
+    sides before computing MSE / rmse (so eval metrics live in physical μK).
+    """
     x_pred = state.apply_fn(
         {'params': params}, observed_map, vec_map, train=False
     )
+    if physical_loss:
+        x_pred_for_loss = asinh_scale * jnp.sinh(x_pred)
+        sz_for_loss = asinh_scale * jnp.sinh(sz_signal)
+    else:
+        x_pred_for_loss = x_pred
+        sz_for_loss = sz_signal
+    loss = jnp.mean(jnp.square(x_pred_for_loss - sz_for_loss))
+    rmse = jnp.sqrt(jnp.mean(jnp.square(x_pred_for_loss - sz_for_loss)))
+    rmse_matched = match_filered_rmse(x_pred_for_loss, sz_for_loss)
 
-    # Compute MSE loss
-    loss = jnp.mean(jnp.square(x_pred - sz_signal))
-
-    # Compute metrics
-    rmse = jnp.sqrt(jnp.mean(jnp.square(x_pred - sz_signal)))
-    rmse_matched = match_filered_rmse(x_pred, sz_signal)
-
-    # Average across devices
     loss = jax.lax.pmean(loss, axis_name='batch')
     rmse = jax.lax.pmean(rmse, axis_name='batch')
     rmse_matched = jax.lax.pmean(rmse_matched, axis_name='batch')
@@ -123,10 +137,12 @@ def eval_model(state, observed_map, sz_signal, vec_map, params):
 
 def train_step(
     state, ema_params, observed_map, sz_signal, vec_map, rng, decay,
+    physical_loss=False, asinh_scale=50.0,
 ):
     """Fused apply + update + EMA. See `training_utils.train_step`."""
     grads, loss = apply_model(
         state, observed_map, sz_signal, vec_map, rng,
+        physical_loss=physical_loss, asinh_scale=asinh_scale,
     )
     new_state = training_utils.update_model(state, grads)
     new_ema_params = jax.tree_util.tree_map(
@@ -134,13 +150,6 @@ def train_step(
         ema_params, new_state.params,
     )
     return new_state, new_ema_params, loss
-
-
-# Create pmapped functions
-eval_model_pmap = jax.pmap(eval_model, axis_name='batch')
-train_step_pmap = jax.pmap(
-    train_step, axis_name='batch', donate_argnums=(0, 1),
-)
 
 
 def main(_):
@@ -154,6 +163,24 @@ def main(_):
 
     print(f'Found devices {jax.local_devices()}')
     print(f'Working directory: {workdir}')
+
+    # Build pmapped functions with the loss-mode kwargs baked in (so JAX
+    # traces them as Python constants, no recompile-per-step).
+    physical_loss = bool(config.get('physical_loss', False))
+    asinh_scale = float(config.get('asinh_scale', 50.0))
+    print(f'Loss mode: physical_loss={physical_loss}, asinh_scale={asinh_scale}')
+    train_step_pmap = jax.pmap(
+        functools.partial(
+            train_step, physical_loss=physical_loss, asinh_scale=asinh_scale,
+        ),
+        axis_name='batch', donate_argnums=(0, 1),
+    )
+    eval_model_pmap = jax.pmap(
+        functools.partial(
+            eval_model, physical_loss=physical_loss, asinh_scale=asinh_scale,
+        ),
+        axis_name='batch',
+    )
 
     # Set up wandb logging and checkpointing.
     wandb.init(

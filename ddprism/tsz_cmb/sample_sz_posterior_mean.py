@@ -43,7 +43,7 @@ DATA_BASE = '/mnt/home/abayer/ceph/fastpm/halfdome/oneweek/final'
 WORK_BASE = '/mnt/home/abayer/ceph/tsz_cmb'
 NUM_PIX = 64
 N_EVAL = 1024            # mass-stratified subset size (must be multiple of block)
-K_SAMPLES = 20
+K_SAMPLES = 20           # default; override via --K
 
 
 def restore_with_metadata(cm, step):
@@ -60,8 +60,8 @@ def restore_with_metadata(cm, step):
     return cm.restore(step, restore_kwargs={'restore_args': restore_args})
 
 
-def sample_for_profile(profile, lap):
-    print(f'\n=== {profile} (lap={lap}) ===', flush=True)
+def sample_for_profile(profile, lap, K=K_SAMPLES):
+    print(f'\n=== {profile} (lap={lap}, K={K}) ===', flush=True)
     sz_workdir = os.path.join(WORK_BASE, f'sz_so_{profile}')
     rand_workdir = os.path.join(WORK_BASE, f'randoms_{profile}_so_long')
     rand_lap = {'b16': 28, 'b16g7': 30, 'b16g7rel': 37}[profile]
@@ -167,7 +167,7 @@ def sample_for_profile(profile, lap):
 
     # Loop K seeds.
     samples = []
-    for k in range(K_SAMPLES):
+    for k in range(K):
         rng_k = jax.random.PRNGKey(1000 + k)
         rng_per = jax.random.split(rng_k, (sz_obs_sub.shape[0], jax.device_count()))
         x_post_chunks = []
@@ -208,7 +208,7 @@ def sample_for_profile(profile, lap):
         f.create_dataset('eval_idx', data=eval_idx_orig)
         f.attrs['profile'] = profile
         f.attrs['lap'] = lap
-        f.attrs['K'] = K_SAMPLES
+        f.attrs['K'] = K
         f.attrs['n_eval'] = n_eval
         f.attrs['stride'] = int(stride)
         f.attrs['map_norm'] = float(config.map_norm)
@@ -221,9 +221,10 @@ if __name__ == '__main__':
     ap = argparse.ArgumentParser()
     ap.add_argument('--profile', choices=list(PROFILES), default=None,
                     help='Run only this profile. If omitted, runs all 3.')
+    ap.add_argument('--K', type=int, default=K_SAMPLES, help='Number of samples')
     args = ap.parse_args()
     if args.profile:
-        sample_for_profile(args.profile, PROFILES[args.profile]['lap'])
+        sample_for_profile(args.profile, PROFILES[args.profile]['lap'], K=args.K)
     else:
         for p, info in PROFILES.items():
-            sample_for_profile(p, info['lap'])
+            sample_for_profile(p, info['lap'], K=args.K)

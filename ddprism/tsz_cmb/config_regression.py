@@ -18,7 +18,7 @@ def get_config():
     config.normalization = 'linear'
     config.asinh_scale = 50.0
     # See config_randoms.py: per-channel raw noise (μK) for cov_y.
-    config.noise_per_chan = None
+    config.noise_per_chan = ()
     # If True, sinh-invert both pred and target before MSE so the loss is
     # in physical μK rather than asinh-normalized space. Only meaningful
     # when normalization=='asinh'. (Empirically did not improve

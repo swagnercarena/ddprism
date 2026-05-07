@@ -19,11 +19,12 @@ def get_config():
     #   'perchan_linear' -- data-driven per-channel scale, linear-preserving.
     config.normalization = 'linear'
     config.asinh_scale = 50.0
-    # Per-channel raw noise (μK) for cov_y. None -> uniform 7 μK across
-    # all channels (default). To weight a noisier/foreground-heavier
-    # channel less in the joint posterior solver, pass a list of C
-    # values (e.g. [7., 7., 16.] for SO with inflated 280 GHz).
-    config.noise_per_chan = None
+    # Per-channel raw noise (μK) for cov_y. Empty tuple () -> uniform
+    # 7 μK across all channels (default). Otherwise pass a tuple of C
+    # values (e.g. (7., 7., 16.) for SO with inflated 280 GHz CIB) to
+    # under-weight noisier channels in the joint posterior solver.
+    # CLI: --config.noise_per_chan="(7.,7.,16.)"
+    config.noise_per_chan = ()
 
     # Parameters for the Denoisers.
     config.sde = ConfigDict({'a': 1e-4, 'b': 1e2})

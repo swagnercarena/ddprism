@@ -75,8 +75,8 @@ def _normalized_noise_var(config, x=None):
     posterior solver to weight it less.
     """
     mode = config.get('normalization', 'linear')
-    raw_noise_per = config.get('noise_per_chan', None)
-    if raw_noise_per is not None:
+    raw_noise_per = config.get('noise_per_chan', ())
+    if raw_noise_per:  # non-empty tuple/list
         raw_noise = jnp.asarray(raw_noise_per, dtype=jnp.float32)  # shape (C,)
     else:
         raw_noise = 7.0  # μK, scalar default

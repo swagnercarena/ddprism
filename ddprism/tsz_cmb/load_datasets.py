@@ -67,11 +67,22 @@ def _normalized_noise_var(config, x=None):
     which is good for typical noise-dominated pixels but wrong at high
     amplitudes (heteroscedasticity). Returns a scalar for global scales
     or shape-(C,) for per-channel modes.
+
+    Channel-dependent effective noise can be specified via
+    `config.noise_per_chan`: a list/tuple/array of C raw-noise μK values
+    (default: uniform 7 μK). Useful when one channel has higher
+    foreground residual (e.g. CIB at 280 GHz) and you want the joint
+    posterior solver to weight it less.
     """
     mode = config.get('normalization', 'linear')
-    raw_noise = 7.0  # μK, hardcoded
+    raw_noise_per = config.get('noise_per_chan', None)
+    if raw_noise_per is not None:
+        raw_noise = jnp.asarray(raw_noise_per, dtype=jnp.float32)  # shape (C,)
+    else:
+        raw_noise = 7.0  # μK, scalar default
     if mode == 'asinh':
-        return (raw_noise / float(config.get('asinh_scale', 50.0))) ** 2
+        scale = float(config.get('asinh_scale', 50.0))
+        return (raw_noise / scale) ** 2
     if mode == 'perchan_linear':
         if x is None:
             raise ValueError(
